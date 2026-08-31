@@ -1,0 +1,69 @@
+schema_version: 1
+facility_api_version: 1.0.0
+name: month-end-closer
+version: 0.1.0
+publisher: anthropic-fsi
+license: NOASSERTION
+risk_tier: baseline
+dependencies: []
+agents:
+- id: month-end-closer
+  name: month-end-closer
+  description: Runs the month-end close for an entity — accruals, roll-forwards, and variance commentary — and stages the close package for controller sign-off. Use for period-end close; not for daily reconciliation (use gl-reconciler for that).
+  source:
+    path: agents/month-end-closer/agent.md
+  model_tier: cloud
+  declared_tools: []
+  skills: []
+  approval_profile: on_request
+  delegation_grants: []
+- id: month-end-closer-root
+  name: month-end-closer plugin
+  description: Accruals, roll-forwards, variance commentary
+  source:
+    path: agents/month-end-closer-root/agent.md
+  model_tier: cloud
+  declared_tools: []
+  skills:
+  - accrual-schedule
+  - audit-xls
+  - roll-forward
+  - variance-commentary
+  - xlsx-author
+  approval_profile: on_request
+  delegation_grants: []
+skills:
+- id: accrual-schedule
+  source:
+    path: agents/month-end-closer-root/skills/accrual-schedule/SKILL.md
+  license: NOASSERTION
+- id: audit-xls
+  source:
+    path: agents/month-end-closer-root/skills/audit-xls/SKILL.md
+  license: NOASSERTION
+- id: roll-forward
+  source:
+    path: agents/month-end-closer-root/skills/roll-forward/SKILL.md
+  license: NOASSERTION
+- id: variance-commentary
+  source:
+    path: agents/month-end-closer-root/skills/variance-commentary/SKILL.md
+  license: NOASSERTION
+- id: xlsx-author
+  source:
+    path: agents/month-end-closer-root/skills/xlsx-author/SKILL.md
+  license: NOASSERTION
+tools: []
+connectors: []
+external_mcp_servers: []
+egress: []
+facilities:
+- model_tiers
+evals:
+  suite:
+    path: evals/import-review-required.md
+  resources:
+  - path: import-report.json
+  model: unverified-import
+  runner: cognic_gateway
+  grader: task_outcome

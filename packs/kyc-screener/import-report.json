@@ -1,0 +1,115 @@
+{
+  "formatVersion": 1,
+  "sourceKind": "claude-plugin",
+  "sourceIdentity": "kyc-screener",
+  "sourceSha256": "bb2e44fe511cc915cbc6ff7be64b38e54a0ca57322d3b47b839ee5e30d3b06b9",
+  "items": [
+    {
+      "sourcePath": ".claude-plugin/plugin.json",
+      "elementKind": "plugin_field:author",
+      "classification": "maps-with-adaptation",
+      "targetPaths": [
+        "pack.yaml#publisher"
+      ],
+      "detail": "author name is normalized to publisher identifier syntax"
+    },
+    {
+      "sourcePath": ".claude-plugin/plugin.json",
+      "elementKind": "plugin_field:description",
+      "classification": "maps-with-adaptation",
+      "targetPaths": [
+        "agents/*/agent.md"
+      ],
+      "detail": "plugin description becomes the generated root-agent description"
+    },
+    {
+      "sourcePath": ".claude-plugin/plugin.json",
+      "elementKind": "plugin_field:name",
+      "classification": "maps-with-adaptation",
+      "targetPaths": [
+        "pack.yaml#name"
+      ],
+      "detail": "plugin name is normalized to Cognic pack identifier syntax"
+    },
+    {
+      "sourcePath": ".claude-plugin/plugin.json",
+      "elementKind": "plugin_field:version",
+      "classification": "maps-cleanly",
+      "targetPaths": [
+        "pack.yaml#version"
+      ],
+      "detail": "plugin version maps to pack version"
+    },
+    {
+      "sourcePath": ".claude-plugin/plugin.json",
+      "elementKind": "plugin_host_entrypoint",
+      "classification": "maps-with-adaptation",
+      "targetPaths": [
+        "agents/kyc-screener-root/agent.md"
+      ],
+      "detail": "Claude's implicit plugin host entry point became a tool-free declarative Cognic agent"
+    },
+    {
+      "sourcePath": "agents/kyc-screener.md",
+      "elementKind": "agent",
+      "classification": "maps-cleanly",
+      "targetPaths": [
+        "agents/kyc-screener/agent.md"
+      ],
+      "detail": "agent name, description, and instructions map to Cognic's closed declarative agent shape; provider-only grants and loop controls are classified separately"
+    },
+    {
+      "sourcePath": "agents/kyc-screener.md",
+      "elementKind": "agent_field:description",
+      "classification": "maps-cleanly",
+      "detail": "agent identity metadata maps to the declarative Cognic agent"
+    },
+    {
+      "sourcePath": "agents/kyc-screener.md",
+      "elementKind": "agent_field:name",
+      "classification": "maps-cleanly",
+      "detail": "agent identity metadata maps to the declarative Cognic agent"
+    },
+    {
+      "sourcePath": "agents/kyc-screener.md",
+      "elementKind": "agent_field:tools",
+      "classification": "unmappable-by-design",
+      "detail": "Claude tool names are not Cognic production-tool grants and were not inferred"
+    },
+    {
+      "sourcePath": "skills/kyc-doc-parse/SKILL.md",
+      "elementKind": "skill_document",
+      "classification": "maps-cleanly",
+      "targetPaths": [
+        "agents/kyc-screener-root/skills/kyc-doc-parse/SKILL.md"
+      ],
+      "detail": "SKILL.md bytes were preserved exactly"
+    },
+    {
+      "sourcePath": "skills/kyc-rules/SKILL.md",
+      "elementKind": "skill_document",
+      "classification": "maps-cleanly",
+      "targetPaths": [
+        "agents/kyc-screener-root/skills/kyc-rules/SKILL.md"
+      ],
+      "detail": "SKILL.md bytes were preserved exactly"
+    },
+    {
+      "sourcePath": "skills/xlsx-author/SKILL.md",
+      "elementKind": "skill_document",
+      "classification": "maps-cleanly",
+      "targetPaths": [
+        "agents/kyc-screener-root/skills/xlsx-author/SKILL.md"
+      ],
+      "detail": "SKILL.md bytes were preserved exactly"
+    }
+  ],
+  "counts": {
+    "mapsCleanly": 7,
+    "mapsWithAdaptation": 4,
+    "unmappableByDesign": 1
+  },
+  "warnings": [
+    "Imported packs carry no source-provided Cognic eval evidence and must remain quarantined until review."
+  ]
+}

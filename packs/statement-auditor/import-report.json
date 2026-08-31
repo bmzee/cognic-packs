@@ -1,0 +1,115 @@
+{
+  "formatVersion": 1,
+  "sourceKind": "claude-plugin",
+  "sourceIdentity": "statement-auditor",
+  "sourceSha256": "0aba15ca1ab726ccc395d2c865c5ed6ff8ada0e945fc8c4ded9b261183ccd063",
+  "items": [
+    {
+      "sourcePath": ".claude-plugin/plugin.json",
+      "elementKind": "plugin_field:author",
+      "classification": "maps-with-adaptation",
+      "targetPaths": [
+        "pack.yaml#publisher"
+      ],
+      "detail": "author name is normalized to publisher identifier syntax"
+    },
+    {
+      "sourcePath": ".claude-plugin/plugin.json",
+      "elementKind": "plugin_field:description",
+      "classification": "maps-with-adaptation",
+      "targetPaths": [
+        "agents/*/agent.md"
+      ],
+      "detail": "plugin description becomes the generated root-agent description"
+    },
+    {
+      "sourcePath": ".claude-plugin/plugin.json",
+      "elementKind": "plugin_field:name",
+      "classification": "maps-with-adaptation",
+      "targetPaths": [
+        "pack.yaml#name"
+      ],
+      "detail": "plugin name is normalized to Cognic pack identifier syntax"
+    },
+    {
+      "sourcePath": ".claude-plugin/plugin.json",
+      "elementKind": "plugin_field:version",
+      "classification": "maps-cleanly",
+      "targetPaths": [
+        "pack.yaml#version"
+      ],
+      "detail": "plugin version maps to pack version"
+    },
+    {
+      "sourcePath": ".claude-plugin/plugin.json",
+      "elementKind": "plugin_host_entrypoint",
+      "classification": "maps-with-adaptation",
+      "targetPaths": [
+        "agents/statement-auditor-root/agent.md"
+      ],
+      "detail": "Claude's implicit plugin host entry point became a tool-free declarative Cognic agent"
+    },
+    {
+      "sourcePath": "agents/statement-auditor.md",
+      "elementKind": "agent",
+      "classification": "maps-cleanly",
+      "targetPaths": [
+        "agents/statement-auditor/agent.md"
+      ],
+      "detail": "agent name, description, and instructions map to Cognic's closed declarative agent shape; provider-only grants and loop controls are classified separately"
+    },
+    {
+      "sourcePath": "agents/statement-auditor.md",
+      "elementKind": "agent_field:description",
+      "classification": "maps-cleanly",
+      "detail": "agent identity metadata maps to the declarative Cognic agent"
+    },
+    {
+      "sourcePath": "agents/statement-auditor.md",
+      "elementKind": "agent_field:name",
+      "classification": "maps-cleanly",
+      "detail": "agent identity metadata maps to the declarative Cognic agent"
+    },
+    {
+      "sourcePath": "agents/statement-auditor.md",
+      "elementKind": "agent_field:tools",
+      "classification": "unmappable-by-design",
+      "detail": "Claude tool names are not Cognic production-tool grants and were not inferred"
+    },
+    {
+      "sourcePath": "skills/audit-xls/SKILL.md",
+      "elementKind": "skill_document",
+      "classification": "maps-cleanly",
+      "targetPaths": [
+        "agents/statement-auditor-root/skills/audit-xls/SKILL.md"
+      ],
+      "detail": "SKILL.md bytes were preserved exactly"
+    },
+    {
+      "sourcePath": "skills/nav-tieout/SKILL.md",
+      "elementKind": "skill_document",
+      "classification": "maps-cleanly",
+      "targetPaths": [
+        "agents/statement-auditor-root/skills/nav-tieout/SKILL.md"
+      ],
+      "detail": "SKILL.md bytes were preserved exactly"
+    },
+    {
+      "sourcePath": "skills/xlsx-author/SKILL.md",
+      "elementKind": "skill_document",
+      "classification": "maps-cleanly",
+      "targetPaths": [
+        "agents/statement-auditor-root/skills/xlsx-author/SKILL.md"
+      ],
+      "detail": "SKILL.md bytes were preserved exactly"
+    }
+  ],
+  "counts": {
+    "mapsCleanly": 7,
+    "mapsWithAdaptation": 4,
+    "unmappableByDesign": 1
+  },
+  "warnings": [
+    "Imported packs carry no source-provided Cognic eval evidence and must remain quarantined until review."
+  ]
+}

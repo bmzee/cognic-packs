@@ -1,0 +1,59 @@
+schema_version: 1
+facility_api_version: 1.0.0
+name: kyc-screener
+version: 0.1.0
+publisher: anthropic-fsi
+license: NOASSERTION
+risk_tier: baseline
+dependencies: []
+agents:
+- id: kyc-screener
+  name: kyc-screener
+  description: Parses an onboarding document packet, runs the firm's KYC/AML rules engine, screens against sanctions and PEP lists, and flags gaps for escalation. Use for new-client onboarding or periodic refresh — not for transaction monitoring.
+  source:
+    path: agents/kyc-screener/agent.md
+  model_tier: cloud
+  declared_tools: []
+  skills: []
+  approval_profile: on_request
+  delegation_grants: []
+- id: kyc-screener-root
+  name: kyc-screener plugin
+  description: Parses onboarding docs, runs the rules engine, flags gaps
+  source:
+    path: agents/kyc-screener-root/agent.md
+  model_tier: cloud
+  declared_tools: []
+  skills:
+  - kyc-doc-parse
+  - kyc-rules
+  - xlsx-author
+  approval_profile: on_request
+  delegation_grants: []
+skills:
+- id: kyc-doc-parse
+  source:
+    path: agents/kyc-screener-root/skills/kyc-doc-parse/SKILL.md
+  license: NOASSERTION
+- id: kyc-rules
+  source:
+    path: agents/kyc-screener-root/skills/kyc-rules/SKILL.md
+  license: NOASSERTION
+- id: xlsx-author
+  source:
+    path: agents/kyc-screener-root/skills/xlsx-author/SKILL.md
+  license: NOASSERTION
+tools: []
+connectors: []
+external_mcp_servers: []
+egress: []
+facilities:
+- model_tiers
+evals:
+  suite:
+    path: evals/import-review-required.md
+  resources:
+  - path: import-report.json
+  model: unverified-import
+  runner: cognic_gateway
+  grader: task_outcome

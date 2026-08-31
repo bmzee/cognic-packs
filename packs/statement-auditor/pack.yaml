@@ -1,0 +1,59 @@
+schema_version: 1
+facility_api_version: 1.0.0
+name: statement-auditor
+version: 0.1.0
+publisher: anthropic-fsi
+license: NOASSERTION
+risk_tier: baseline
+dependencies: []
+agents:
+- id: statement-auditor
+  name: statement-auditor
+  description: Audits a batch of pre-generated LP capital-account statements against the fund NAV pack before distribution — ties out balances, allocations, and fees, and flags discrepancies. Use as the final check before statements go out.
+  source:
+    path: agents/statement-auditor/agent.md
+  model_tier: cloud
+  declared_tools: []
+  skills: []
+  approval_profile: on_request
+  delegation_grants: []
+- id: statement-auditor-root
+  name: statement-auditor plugin
+  description: Audits pre-generated LP statements before distribution
+  source:
+    path: agents/statement-auditor-root/agent.md
+  model_tier: cloud
+  declared_tools: []
+  skills:
+  - audit-xls
+  - nav-tieout
+  - xlsx-author
+  approval_profile: on_request
+  delegation_grants: []
+skills:
+- id: audit-xls
+  source:
+    path: agents/statement-auditor-root/skills/audit-xls/SKILL.md
+  license: NOASSERTION
+- id: nav-tieout
+  source:
+    path: agents/statement-auditor-root/skills/nav-tieout/SKILL.md
+  license: NOASSERTION
+- id: xlsx-author
+  source:
+    path: agents/statement-auditor-root/skills/xlsx-author/SKILL.md
+  license: NOASSERTION
+tools: []
+connectors: []
+external_mcp_servers: []
+egress: []
+facilities:
+- model_tiers
+evals:
+  suite:
+    path: evals/import-review-required.md
+  resources:
+  - path: import-report.json
+  model: unverified-import
+  runner: cognic_gateway
+  grader: task_outcome

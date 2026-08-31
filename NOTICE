@@ -1,0 +1,11 @@
+cognic-packs
+Copyright 2026 the cognic-packs maintainers.
+
+This repository contains capability packs for the Cognic governed-agent
+platform, converted with the Cognic pack importer from plugins published by
+Anthropic in https://github.com/anthropics/financial-services (Apache
+License 2.0, Copyright Anthropic, PBC). Each pack directory preserves the
+upstream instructional content with format adaptations recorded in its
+import-report.json. Modifications: conversion to the Cognic pack manifest
+format, tool-mapping adaptations listed per pack, and Cognic-specific
+governance metadata.
