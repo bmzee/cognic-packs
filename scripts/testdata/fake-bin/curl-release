@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+output=''
+url=''
+while (( $# > 0 )); do
+  case "$1" in
+    --output) output=${2:-}; shift 2 ;;
+    --header) shift 2 ;;
+    --fail|--location|--silent|--show-error|--retry-all-errors) shift ;;
+    --retry) shift 2 ;;
+    http*) url=$1; shift ;;
+    *) printf 'unexpected fake curl argument: %s\n' "$1" >&2; exit 2 ;;
+  esac
+done
+[[ -n "${FAKE_PUBLIC_RELEASE_DIR:-}" && -n "$output" && -n "$url" ]] || exit 2
+if [[ "$url" == https://api.github.com/* ]]; then
+  source_file="${FAKE_PUBLIC_RELEASE_DIR}/release.json"
+else
+  source_file="${FAKE_PUBLIC_RELEASE_DIR}/${url##*/}"
+fi
+[[ -f "$source_file" ]] || exit 22
+cp -- "$source_file" "$output"

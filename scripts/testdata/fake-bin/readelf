@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+mode=${1:-}
+binary=${2:-}
+[[ -f "$binary" ]] || exit 2
+if grep -Fq 'fixture-arch=amd64' "$binary"; then
+  machine='Advanced Micro Devices X86-64'
+elif grep -Fq 'fixture-arch=arm64' "$binary"; then
+  machine=AArch64
+else
+  exit 2
+fi
+case "$mode" in
+  -h) printf '  Machine:                           %s\n' "$machine" ;;
+  -l)
+    printf '%s\n' 'Elf file type is EXEC (Executable file)'
+    [[ "${FAKE_READELF_DYNAMIC:-false}" != true ]] || \
+      printf '%s\n' '[Requesting program interpreter: /lib/ld.so]'
+    ;;
+  *) exit 2 ;;
+esac

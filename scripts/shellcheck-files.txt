@@ -1,0 +1,14 @@
+scripts/cosign-self-test.sh
+scripts/fetch-and-verify-pack-validator.sh
+scripts/self-test-fetch-and-verify-pack-validator.sh
+scripts/self-test-stage-pack-release.sh
+scripts/self-test-verify-published-pack-release.sh
+scripts/stage-pack-release.sh
+scripts/testdata/fake-bin/cosign
+scripts/testdata/fake-bin/cosign-release
+scripts/testdata/fake-bin/curl
+scripts/testdata/fake-bin/curl-release
+scripts/testdata/fake-bin/oras
+scripts/testdata/fake-bin/pack-validator
+scripts/testdata/fake-bin/readelf
+scripts/verify-published-pack-release.sh

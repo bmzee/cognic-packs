@@ -1,0 +1,7 @@
+{
+  "acceptanceCommit": "e24638dc586501695e0752d5dd41801b04531064",
+  "reason": "No public cognic-app release at or after the canonical pack-validator release staging commit exists yet. This lock is intentionally fail-closed; do not replace it with a local build or an unsigned stand-in.",
+  "schemaVersion": "1",
+  "sourceRepository": "bmzee/cognic-app",
+  "status": "blocked"
+}

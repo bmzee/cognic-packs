@@ -1,0 +1,132 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${1:-}" == version ]]; then
+  printf '%s\n' 'Version:        1.3.3'
+  exit 0
+fi
+state_dir=${FAKE_ORAS_STATE_DIR:?}
+mkdir -p "$state_dir"
+command_name=${1:-}
+shift || true
+
+case "$command_name" in
+  push)
+    reference=''
+    file_spec=''
+    artifact_type=''
+    created_annotation=''
+    source_annotation=''
+    revision_annotation=''
+    version_annotation=''
+    while (( $# > 0 )); do
+      case "$1" in
+        --artifact-type)
+          artifact_type=${2:-}
+          shift 2
+          ;;
+        --annotation)
+          case "${2:-}" in
+            org.opencontainers.image.created=*) created_annotation=${2#*=} ;;
+            org.opencontainers.image.source=*) source_annotation=${2#*=} ;;
+            org.opencontainers.image.revision=*) revision_annotation=${2#*=} ;;
+            org.opencontainers.image.version=*) version_annotation=${2#*=} ;;
+            *) exit 2 ;;
+          esac
+          shift 2
+          ;;
+        --format)
+          [[ "${2:-}" == json ]] || exit 2
+          shift 2
+          ;;
+        --*) exit 2 ;;
+        *)
+          if [[ -z "$reference" ]]; then reference=$1; else file_spec=$1; fi
+          shift
+          ;;
+      esac
+    done
+    [[ -n "$reference" && -n "$file_spec" && \
+      "$artifact_type" == application/vnd.cognic.pack.v1 && \
+      -n "$created_annotation" && -n "$source_annotation" && \
+      -n "$revision_annotation" && -n "$version_annotation" ]] || exit 2
+    archive=${file_spec%%:*}
+    layer_digest="sha256:$(sha256sum "$archive" | awk '{print $1}')"
+    [[ "${FAKE_ORAS_CORRUPT_LAYER:-false}" != true ]] || \
+      layer_digest='sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd'
+    layer_size=$(wc -c < "$archive" | awk '{print $1}')
+    layer_title=${archive##*/}
+    jq -S -n \
+      --arg layer "$layer_digest" \
+      --arg title "$layer_title" \
+      --arg created "$created_annotation" \
+      --arg source "$source_annotation" \
+      --arg revision "$revision_annotation" \
+      --arg version "$version_annotation" \
+      --argjson layer_size "$layer_size" '
+      {
+        schemaVersion: 2,
+        mediaType: "application/vnd.oci.image.manifest.v1+json",
+        artifactType: "application/vnd.cognic.pack.v1",
+        config: {
+          mediaType: "application/vnd.oci.empty.v1+json",
+          digest: "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+          size: 2,
+          data: "e30="
+        },
+        layers: [{
+          mediaType: "application/vnd.cognic.pack.v1.tar+gzip",
+          digest: $layer,
+          size: $layer_size,
+          annotations: {"org.opencontainers.image.title": $title}
+        }],
+        annotations: {
+          "org.opencontainers.image.created": $created,
+          "org.opencontainers.image.source": $source,
+          "org.opencontainers.image.revision": $revision,
+          "org.opencontainers.image.version": $version
+        }
+      }
+    ' > "${state_dir}/manifest.json"
+    manifest_digest="sha256:$(sha256sum "${state_dir}/manifest.json" | awk '{print $1}')"
+    printf '%s\n' "$manifest_digest" > "${state_dir}/digest"
+    if [[ "${FAKE_ORAS_BAD_PUSH_OUTPUT:-false}" == true ]]; then
+      jq -n --arg digest "$manifest_digest" '{manifest: {digest: $digest}}'
+      exit 0
+    fi
+    repository=${reference%:*}
+    jq -S -n \
+      --arg reference "${repository}@${manifest_digest}" \
+      --arg tag "$reference" \
+      --arg digest "$manifest_digest" \
+      --arg artifact_type "$artifact_type" \
+      --arg created "$created_annotation" \
+      --arg source "$source_annotation" \
+      --arg revision "$revision_annotation" \
+      --arg version "$version_annotation" '
+      {
+        reference: $reference,
+        mediaType: "application/vnd.oci.image.manifest.v1+json",
+        digest: $digest,
+        size: 1,
+        annotations: {
+          "org.opencontainers.image.created": $created,
+          "org.opencontainers.image.source": $source,
+          "org.opencontainers.image.revision": $revision,
+          "org.opencontainers.image.version": $version
+        },
+        artifactType: $artifact_type,
+        referenceAsTags: [$tag]
+      }
+    '
+    ;;
+  resolve)
+    [[ $# == 1 ]] || exit 2
+    cat "${state_dir}/digest"
+    ;;
+  manifest)
+    [[ "${1:-}" == fetch && -n "${2:-}" ]] || exit 2
+    cat "${state_dir}/manifest.json"
+    ;;
+  *) exit 2 ;;
+esac

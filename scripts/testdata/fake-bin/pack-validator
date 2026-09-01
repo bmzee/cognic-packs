@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+[[ "${1:-}" == --json && -d "${2:-}" ]] || exit 2
+pack_dir=$2
+name=$(awk '$1 == "name:" { print $2; exit }' "${pack_dir}/pack.yaml")
+version=$(awk '$1 == "version:" { print $2; exit }' "${pack_dir}/pack.yaml")
+manifest=$(sha256sum "${pack_dir}/pack.yaml" | awk '{print $1}')
+content=$(
+  cd "$pack_dir"
+  find . -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}'
+)
+jq -n \
+  --arg name "$name" \
+  --arg version "$version" \
+  --arg manifest "$manifest" \
+  --arg content "$content" '
+  {
+    status: "valid",
+    name: $name,
+    version: $version,
+    manifestSha256: $manifest,
+    contentSha256: $content
+  }
+'

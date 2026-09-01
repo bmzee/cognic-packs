@@ -1,0 +1,1085 @@
+name: publish signed pack release
+
+on:
+  push:
+    tags:
+      - '*-v*.*.*'
+
+# The job grants only the capabilities used by this tag-driven release. The
+# protected `release` environment must bind its Azure federated credential to
+# this repository and environment; no long-lived signing secret is accepted.
+permissions: {}
+
+concurrency:
+  group: pack-release-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  publish:
+    name: sign, publish, and publicly verify one pack
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    environment: release
+    permissions:
+      contents: write
+      id-token: write
+      packages: write
+    env:
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      AZURE_CORE_OUTPUT: none
+      AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      COSIGN_KMS_KEY_URI: ${{ vars.COSIGN_KMS_KEY_URI }}
+      COSIGN_KMS_PUBLIC_KEY_SHA256: ${{ vars.COSIGN_KMS_PUBLIC_KEY_SHA256 }}
+      COSIGN_TSA_CERTIFICATE_CHAIN_PEM: ${{ vars.COSIGN_TSA_CERTIFICATE_CHAIN_PEM }}
+      COSIGN_TSA_CERTIFICATE_CHAIN_SHA256: ${{ vars.COSIGN_TSA_CERTIFICATE_CHAIN_SHA256 }}
+      COSIGN_TSA_OPERATOR: ${{ vars.COSIGN_TSA_OPERATOR }}
+      COSIGN_TSA_URI: ${{ vars.COSIGN_TSA_URI }}
+      COSIGN_TSA_VALIDITY_START: ${{ vars.COSIGN_TSA_VALIDITY_START }}
+      DOCKER_CONFIG: ${{ runner.temp }}/registry-auth
+      EXPECTED_RELEASE_ENVIRONMENT: release
+      RELEASE_TAG: ${{ github.ref_name }}
+      RELEASE_IMMUTABILITY_ENABLED: ${{ vars.RELEASE_IMMUTABILITY_ENABLED }}
+      SOURCE_REPOSITORY: https://github.com/${{ github.repository }}
+      SOURCE_SHA: ${{ github.sha }}
+    steps:
+      - name: Checkout the exact tagged source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.sha }}
+
+      - name: Validate protected tag, source, and clean checkout
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_EVENT_NAME" == push ]]
+          [[ "$GITHUB_REF_TYPE" == tag ]]
+          [[ "$GITHUB_REF" == "refs/tags/${RELEASE_TAG}" ]]
+          [[ "$GITHUB_REF_PROTECTED" == true ]]
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$RELEASE_TAG" =~ ^[a-z0-9][a-z0-9._-]*-v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$GITHUB_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]
+          [[ "$SOURCE_REPOSITORY" == "https://github.com/${GITHUB_REPOSITORY}" ]]
+          [[ "$GITHUB_WORKFLOW_REF" == \
+            "${GITHUB_REPOSITORY}/.github/workflows/release.yml@refs/tags/${RELEASE_TAG}" ]]
+
+          head_sha=$(git rev-parse --verify 'HEAD^{commit}')
+          tag_sha=$(git rev-parse --verify "refs/tags/${RELEASE_TAG}^{commit}")
+          master_sha=$(git rev-parse --verify 'refs/remotes/origin/master^{commit}')
+          [[ "$head_sha" == "$SOURCE_SHA" ]]
+          [[ "$tag_sha" == "$SOURCE_SHA" ]]
+          [[ "$SOURCE_SHA" == "$master_sha" ]]
+          [[ -z "$(git symbolic-ref --quiet --short HEAD || true)" ]]
+          [[ -z "$(git status --porcelain=v1 --untracked-files=all)" ]]
+
+      - name: Parse workflows and require immutable action references
+        run: |
+          set -euo pipefail
+          ruby -e '
+            require "yaml"
+            ARGV.each { |path| YAML.safe_load(File.read(path), aliases: true) }
+          ' .github/workflows/*.yml
+          ruby -e '
+            failures = []
+            Dir[".github/workflows/*.{yml,yaml}"].sort.each do |path|
+              File.readlines(path, chomp: true).each_with_index do |line, index|
+                next unless (match = line.match(/^\s*-?\s*uses:\s*(\S+)/))
+                reference = match[1]
+                valid = if reference.start_with?("docker://")
+                  reference.match?(/@sha256:[0-9a-f]{64}\z/)
+                else
+                  reference.match?(/@[0-9a-f]{40}\z/)
+                end
+                failures << "#{path}:#{index + 1}: #{reference}" unless valid
+              end
+            end
+            abort "mutable action references:\n#{failures.join("\n")}" unless failures.empty?
+          '
+
+      - name: Shellcheck every repository script
+        run: |
+          set -euo pipefail
+          image='koalaman/shellcheck@sha256:61862eba1fcf09a484ebcc6feea46f1782532571a34ed51fedf90dd25f925a8d'
+          pulled=false
+          for attempt in 1 2 3 4; do
+            if docker pull "$image"; then pulled=true; break; fi
+            [[ "$attempt" == 4 ]] || sleep "$((attempt * 2))"
+          done
+          [[ "$pulled" == true ]]
+          [[ -z "$(find scripts -type l -print -quit)" ]]
+          mapfile -t scripts < scripts/shellcheck-files.txt
+          [[ "${#scripts[@]}" -gt 0 ]]
+          mapfile -t detected < <(ruby -e '
+            Dir.glob("scripts/**/*", File::FNM_DOTMATCH).sort.each do |path|
+              next unless File.file?(path) && !File.symlink?(path)
+              first = File.open(path, "rb", &:gets)
+              shell = path.end_with?(".sh") ||
+                first&.match?(%r{\A\#!.*(?:/|[[:space:]])(?:ba|da|k|z)?sh(?:[[:space:]]|\z)})
+              puts path if shell
+            end
+          ')
+          [[ "${#scripts[@]}" == "${#detected[@]}" ]]
+          for index in "${!scripts[@]}"; do
+            [[ "${scripts[$index]}" == "${detected[$index]}" ]]
+            [[ "${scripts[$index]}" =~ ^scripts/[A-Za-z0-9._/-]+$ ]]
+            [[ -f "${scripts[$index]}" && ! -L "${scripts[$index]}" ]]
+            [[ "$(head -n 1 "${scripts[$index]}")" == '#!/usr/bin/env bash' ]]
+          done
+          docker run --rm \
+            --network none \
+            --read-only \
+            --cap-drop ALL \
+            --security-opt no-new-privileges \
+            --user 65534:65534 \
+            --volume "${GITHUB_WORKSPACE}:/mnt:ro" \
+            --workdir /mnt \
+            "$image" \
+            --shell=bash "${scripts[@]}"
+
+      # Release jobs rerun the mutation-gate tests after ShellCheck. This is
+      # especially useful for the first execution of a reviewed workflow.
+      - name: Run fail-closed release lane self-tests
+        env:
+          PACK_RELEASE_RETRY_DELAY_SECONDS: 0
+        run: |
+          set -euo pipefail
+          scripts/self-test-fetch-and-verify-pack-validator.sh
+          scripts/self-test-stage-pack-release.sh
+          scripts/self-test-verify-published-pack-release.sh
+          FAKE_COSIGN_STATE_DIR="${RUNNER_TEMP}/cosign-self-test-state" \
+          FAKE_COSIGN_LOG="${RUNNER_TEMP}/cosign-self-test.log" \
+            scripts/cosign-self-test.sh \
+              --key azurekms://fixture.vault.azure.net/release/key \
+              --public-key scripts/testdata/cosign/public.pem \
+              --signing-config scripts/testdata/cosign/signing-config.json \
+              --trusted-root scripts/testdata/cosign/trusted-root.json \
+              --cosign scripts/testdata/fake-bin/cosign-release
+
+      - name: Install checksum-pinned Cosign and ORAS
+        env:
+          COSIGN_SHA256: 4629c757b7618056f8ddd7e2625ae9fdd94c0372a65049520bc7d9df9efc7f71
+          COSIGN_VERSION: 3.1.3
+          ORAS_SHA256: 9ce999f8d2de03fc03968b29d743077a58783e545e5eaa53917ca177352d0e59
+          ORAS_VERSION: 1.3.3
+        run: |
+          set -euo pipefail
+          tools_dir="${RUNNER_TEMP}/release-tools"
+          mkdir -p "$tools_dir"
+          cosign_download="${RUNNER_TEMP}/cosign-linux-amd64"
+          oras_archive="${RUNNER_TEMP}/oras-linux-amd64.tar.gz"
+
+          curl --fail --location --silent --show-error \
+            --retry 5 --retry-all-errors \
+            --output "$cosign_download" \
+            "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-amd64"
+          printf '%s  %s\n' "$COSIGN_SHA256" "$cosign_download" | \
+            sha256sum --check --strict --status
+          install -m 0555 "$cosign_download" "${tools_dir}/cosign"
+
+          curl --fail --location --silent --show-error \
+            --retry 5 --retry-all-errors \
+            --output "$oras_archive" \
+            "https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/oras_${ORAS_VERSION}_linux_amd64.tar.gz"
+          printf '%s  %s\n' "$ORAS_SHA256" "$oras_archive" | \
+            sha256sum --check --strict --status
+          [[ "$(tar -tzf "$oras_archive" | grep -Ec '^oras$')" == 1 ]]
+          tar -xzf "$oras_archive" -C "$tools_dir" oras
+          chmod 0555 "${tools_dir}/oras"
+
+          "${tools_dir}/cosign" version | grep -Fxq 'GitVersion:    v3.1.3'
+          "${tools_dir}/oras" version | grep -Eq '^Version:[[:space:]]+1\.3\.3$'
+          printf '%s\n' "$tools_dir" >> "$GITHUB_PATH"
+
+      # This is the only validator source. Missing public assets, digest or
+      # signature drift, unsafe archives, and stale locks all fail closed.
+      - name: Fetch and verify the canonical static pack validator
+        run: |
+          set -euo pipefail
+          scripts/fetch-and-verify-pack-validator.sh \
+            --lock release/pack-validator.lock.json \
+            --output "${RUNNER_TEMP}/cognic-pack-validate"
+
+      - name: Validate every pack and select exactly one from the tag
+        id: select
+        run: |
+          set -euo pipefail
+          validator="${RUNNER_TEMP}/cognic-pack-validate"
+          selected_name=''
+          selected_version=''
+          selected_manifest_sha256=''
+          selected_content_sha256=''
+          count=0
+          matches=0
+          while IFS= read -r -d '' pack_dir; do
+            if [[ ! -d "$pack_dir" || -L "$pack_dir" ]]; then
+              printf 'unsafe non-directory entry under packs/: %s\n' "$pack_dir" >&2
+              exit 1
+            fi
+            evidence=$("$validator" --json "$pack_dir")
+            jq -e '
+              .status == "valid" and
+              (.name | type == "string" and length >= 1 and length <= 128 and
+                test("^[a-z0-9]([a-z0-9._-]*[a-z0-9])?$")) and
+              (.version | test("^[0-9]+\\.[0-9]+\\.[0-9]+$")) and
+              (.manifestSha256 | test("^[0-9a-f]{64}$")) and
+              (.contentSha256 | test("^[0-9a-f]{64}$"))
+            ' <<<"$evidence" >/dev/null
+            pack_name=$(jq -er '.name' <<<"$evidence")
+            pack_version=$(jq -er '.version' <<<"$evidence")
+            [[ "${pack_dir##*/}" == "$pack_name" ]]
+            if [[ "${pack_name}-v${pack_version}" == "$RELEASE_TAG" ]]; then
+              selected_name=$pack_name
+              selected_version=$pack_version
+              selected_manifest_sha256=$(jq -er '.manifestSha256' <<<"$evidence")
+              selected_content_sha256=$(jq -er '.contentSha256' <<<"$evidence")
+              matches=$((matches + 1))
+            fi
+            count=$((count + 1))
+            printf 'PACK_VALIDATED: %s@%s content=sha256:%s\n' \
+              "$pack_name" "$pack_version" "$(jq -er '.contentSha256' <<<"$evidence")"
+          done < <(find packs -mindepth 1 -maxdepth 1 -print0 | sort -z)
+          [[ "$count" -gt 0 ]]
+          [[ "$matches" == 1 ]]
+
+          owner=$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')
+          [[ "$owner" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]]
+          pack_name_sha256=$(printf '%s' "$selected_name" | sha256sum | awk '{print $1}')
+          oci_repository="ghcr.io/${owner}/cognic-packs/pack-sha256-${pack_name_sha256}"
+          {
+            printf 'pack_name=%s\n' "$selected_name"
+            printf 'pack_version=%s\n' "$selected_version"
+            printf 'manifest_sha256=%s\n' "$selected_manifest_sha256"
+            printf 'content_sha256=%s\n' "$selected_content_sha256"
+            printf 'oci_repository=%s\n' "$oci_repository"
+          } >> "$GITHUB_OUTPUT"
+
+      # GitHub's live immutable-release settings endpoint requires
+      # Administration:read, which GITHUB_TOKEN cannot request. The protected
+      # environment therefore carries an explicit operator assertion. The
+      # public post-publish verifier remains authoritative: it requires the
+      # resulting release itself to report immutable=true.
+      - name: Preflight release authority or select exact published adoption
+        id: authority
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PACK_NAME: ${{ steps.select.outputs.pack_name }}
+          PACK_VERSION: ${{ steps.select.outputs.pack_version }}
+        run: |
+          set -euo pipefail
+          retry_capture() {
+            local destination=$1
+            shift
+            local attempt
+            for attempt in 1 2 3 4; do
+              rm -f -- "$destination"
+              if "$@" > "$destination"; then return 0; fi
+              [[ "$attempt" == 4 ]] || sleep "$((attempt * 2))"
+            done
+            return 1
+          }
+
+          [[ "$RELEASE_IMMUTABILITY_ENABLED" == true ]]
+
+          release_pages="${RUNNER_TEMP}/release-pages.json"
+          retry_capture "$release_pages" gh api --paginate \
+            -H 'Accept: application/vnd.github+json' \
+            -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "repos/${GITHUB_REPOSITORY}/releases?per_page=100"
+          matches=$(jq -sc --arg tag "$RELEASE_TAG" \
+            '[(add // [])[] | select(.tag_name == $tag)]' "$release_pages")
+          case "$(jq -r 'length' <<<"$matches")" in
+            0)
+              mode=publish
+              ;;
+            1)
+              metadata=$(jq -c '.[0]' <<<"$matches")
+              if jq -e --arg tag "$RELEASE_TAG" --arg source "$SOURCE_SHA" '
+                .draft == true and .prerelease == false and
+                .tag_name == $tag and .target_commitish == $source
+              ' <<<"$metadata" >/dev/null; then
+                mode=resume-draft
+              elif jq -e --arg tag "$RELEASE_TAG" --arg source "$SOURCE_SHA" '
+                .draft == false and .prerelease == false and .immutable == true and
+                .tag_name == $tag and .target_commitish == $source
+              ' <<<"$metadata" >/dev/null; then
+                mode=adopt-published
+              else
+                printf '%s\n' \
+                  'existing release has a mismatched target, state, or immutability' >&2
+                exit 1
+              fi
+              ;;
+            *)
+              printf '%s\n' 'more than one release carries the final tag' >&2
+              exit 1
+              ;;
+          esac
+
+          manifest_name="${PACK_NAME}-${PACK_VERSION}.release.json"
+          {
+            printf 'mode=%s\n' "$mode"
+            printf 'manifest_name=%s\n' "$manifest_name"
+          } >> "$GITHUB_OUTPUT"
+          printf 'RELEASE_AUTHORITY_OK: tag=%s mode=%s\n' "$RELEASE_TAG" "$mode"
+
+      # Packs reuse the already reviewed Cognic HSM/private-TSA authority.
+      # Repository-specific environment OIDC federation confines this lane's
+      # access; mutable protected variables may not rotate that public trust
+      # identity without a reviewed source change.
+      - name: Match protected variables to committed signing authority
+        id: signing_policy
+        run: |
+          set -euo pipefail
+          authority=release/signing-authority.json
+          jq -e '
+            keys == ["schemaVersion", "signingIdentity", "sourceAuthority"] and
+            .schemaVersion == "1" and
+            (.signingIdentity | keys == [
+              "cosignVersion", "kmsKeyUri", "kmsPublicKeySha256", "mode",
+              "timestampAuthority"
+            ]) and
+            .signingIdentity.cosignVersion == "3.1.3" and
+            .signingIdentity.mode == "github-oidc-azure-kms-private-tsa" and
+            (.signingIdentity.kmsKeyUri | test("^azurekms://[^[:space:]<>]+$")) and
+            (.signingIdentity.kmsPublicKeySha256 | test("^[0-9a-f]{64}$")) and
+            (.signingIdentity.timestampAuthority | keys == [
+              "apiVersion", "certificateChainSha256", "mode", "operator",
+              "trustedRootSha256", "uri", "validityStart"
+            ]) and
+            .signingIdentity.timestampAuthority.apiVersion == 1 and
+            .signingIdentity.timestampAuthority.mode == "private-rfc3161" and
+            (.signingIdentity.timestampAuthority.certificateChainSha256 |
+              test("^[0-9a-f]{64}$")) and
+            (.signingIdentity.timestampAuthority.trustedRootSha256 |
+              test("^[0-9a-f]{64}$")) and
+            (.signingIdentity.timestampAuthority.operator |
+              test("^[A-Za-z0-9][A-Za-z0-9._-]*$")) and
+            (.signingIdentity.timestampAuthority.uri | test("^https://[^[:space:],<>]+$")) and
+            (.signingIdentity.timestampAuthority.validityStart |
+              test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")) and
+            (.sourceAuthority | keys == ["file", "gitCommit", "repository"]) and
+            .sourceAuthority.file == "infra/provenance/engine.yaml" and
+            (.sourceAuthority.gitCommit | test("^[0-9a-f]{40}$")) and
+            (.sourceAuthority.repository | test("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"))
+          ' "$authority" >/dev/null
+
+          authority_kms_uri=$(jq -er '.signingIdentity.kmsKeyUri' "$authority")
+          authority_public_key_sha256=$(jq -er \
+            '.signingIdentity.kmsPublicKeySha256' "$authority")
+          authority_tsa_uri=$(jq -er \
+            '.signingIdentity.timestampAuthority.uri' "$authority")
+          authority_tsa_operator=$(jq -er \
+            '.signingIdentity.timestampAuthority.operator' "$authority")
+          authority_tsa_start=$(jq -er \
+            '.signingIdentity.timestampAuthority.validityStart' "$authority")
+          authority_tsa_chain_sha256=$(jq -er \
+            '.signingIdentity.timestampAuthority.certificateChainSha256' "$authority")
+          authority_trusted_root_sha256=$(jq -er \
+            '.signingIdentity.timestampAuthority.trustedRootSha256' "$authority")
+
+          [[ "$COSIGN_KMS_KEY_URI" == "$authority_kms_uri" ]]
+          [[ "$COSIGN_KMS_PUBLIC_KEY_SHA256" == "$authority_public_key_sha256" ]]
+          [[ "$COSIGN_TSA_URI" == "$authority_tsa_uri" ]]
+          [[ "$COSIGN_TSA_OPERATOR" == "$authority_tsa_operator" ]]
+          [[ "$COSIGN_TSA_VALIDITY_START" == "$authority_tsa_start" ]]
+          [[ "$COSIGN_TSA_CERTIFICATE_CHAIN_SHA256" == \
+            "$authority_tsa_chain_sha256" ]]
+          actual_chain_sha256=$(printf '%s' "$COSIGN_TSA_CERTIFICATE_CHAIN_PEM" | \
+            sha256sum | awk '{print $1}')
+          [[ "$actual_chain_sha256" == "$authority_tsa_chain_sha256" ]]
+          {
+            printf 'public_key_sha256=%s\n' "$authority_public_key_sha256"
+            printf 'trusted_root_sha256=%s\n' "$authority_trusted_root_sha256"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Refuse static credentials and validate the OIDC context
+        run: |
+          set -euo pipefail
+          for static_name in \
+            AZURE_CLIENT_SECRET AZURE_CLIENT_CERTIFICATE_PATH \
+            AZURE_USERNAME AZURE_PASSWORD ARM_CLIENT_SECRET; do
+            [[ -z "${!static_name:-}" ]]
+          done
+          uuid_re='^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+          [[ "$AZURE_CLIENT_ID" =~ $uuid_re ]]
+          [[ "$AZURE_TENANT_ID" =~ $uuid_re ]]
+          [[ "$AZURE_SUBSCRIPTION_ID" =~ $uuid_re ]]
+          [[ "$EXPECTED_RELEASE_ENVIRONMENT" == release ]]
+          [[ -n "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" ]]
+          [[ "$ACTIONS_ID_TOKEN_REQUEST_URL" =~ ^https://[^[:space:]]+$ ]]
+          [[ "$COSIGN_KMS_KEY_URI" =~ ^azurekms://[^[:space:]\<\>]+$ ]]
+          [[ "$COSIGN_KMS_PUBLIC_KEY_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$COSIGN_TSA_CERTIFICATE_CHAIN_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$COSIGN_TSA_URI" =~ ^https://[^[:space:],\<\>]+$ ]]
+          [[ "$COSIGN_TSA_OPERATOR" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]
+          [[ "$COSIGN_TSA_VALIDITY_START" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]
+          [[ -n "$COSIGN_TSA_CERTIFICATE_CHAIN_PEM" ]]
+
+      - name: Exchange GitHub OIDC for the release-bound Azure identity
+        uses: azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43 # v3.0.0
+        with:
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+
+      - name: Verify the Azure principal and Key Vault access
+        run: |
+          set -euo pipefail
+          account=$(az account show --output json)
+          jq -e \
+            --arg client "$AZURE_CLIENT_ID" \
+            --arg subscription "$AZURE_SUBSCRIPTION_ID" \
+            --arg tenant "$AZURE_TENANT_ID" '
+              .id == $subscription and .tenantId == $tenant and
+              .user.type == "servicePrincipal" and
+              ((.user.name | ascii_downcase) == ($client | ascii_downcase))
+            ' <<<"$account" >/dev/null
+          token_expiry=$(az account get-access-token \
+            --resource https://vault.azure.net \
+            --query expiresOn \
+            --output tsv)
+          [[ -n "$token_expiry" ]]
+
+      # WorkloadIdentityCredential precedes ManagedIdentityCredential in the
+      # Azure SDK chain used by Cosign. Refreshing this short-lived GitHub OIDC
+      # token keeps the long signing job bound to the protected environment.
+      - name: Provide a refreshed federated token file to Cosign
+        run: |
+          set -euo pipefail
+          token_file="${RUNNER_TEMP}/azure-federated-token"
+          umask 077
+          mint() {
+            curl --fail --silent --show-error \
+              --retry 5 --retry-all-errors \
+              -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+              "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=api://AzureADTokenExchange" | \
+              jq -jer '.value' > "${token_file}.tmp"
+            mv "${token_file}.tmp" "$token_file"
+          }
+          mint
+          ( while sleep 240; do mint || true; done ) &
+          {
+            printf 'AZURE_FEDERATED_TOKEN_FILE=%s\n' "$token_file"
+            printf 'AZURE_TOKEN_REFRESHER_PID=%s\n' "$!"
+          } >> "$GITHUB_ENV"
+
+      - name: Derive and pin the KMS public key and private TSA roots
+        env:
+          AUTHORITY_PUBLIC_KEY_SHA256: ${{ steps.signing_policy.outputs.public_key_sha256 }}
+          AUTHORITY_TRUSTED_ROOT_SHA256: ${{ steps.signing_policy.outputs.trusted_root_sha256 }}
+        run: |
+          set -euo pipefail
+          public_key="${RUNNER_TEMP}/release-kms-public.pem"
+          tsa_chain="${RUNNER_TEMP}/release-tsa-chain.pem"
+          signing_config="${RUNNER_TEMP}/release-signing-config.json"
+          trusted_root="${RUNNER_TEMP}/release-trusted-root.json"
+
+          derived=false
+          for attempt in 1 2 3 4; do
+            rm -f -- "$public_key"
+            if cosign public-key --key "$COSIGN_KMS_KEY_URI" > "$public_key"; then
+              derived=true
+              break
+            fi
+            [[ "$attempt" == 4 ]] || sleep "$((attempt * 2))"
+          done
+          [[ "$derived" == true && -s "$public_key" ]]
+          printf '%s  %s\n' "$COSIGN_KMS_PUBLIC_KEY_SHA256" "$public_key" | \
+            sha256sum --check --strict --status
+          [[ "$(sha256sum "$public_key" | awk '{print $1}')" == \
+            "$AUTHORITY_PUBLIC_KEY_SHA256" ]]
+
+          umask 077
+          printf '%s' "$COSIGN_TSA_CERTIFICATE_CHAIN_PEM" > "$tsa_chain"
+          [[ -s "$tsa_chain" ]]
+          printf '%s  %s\n' "$COSIGN_TSA_CERTIFICATE_CHAIN_SHA256" "$tsa_chain" | \
+            sha256sum --check --strict --status
+          cosign signing-config create \
+            --tsa="url=${COSIGN_TSA_URI},api-version=1,start-time=${COSIGN_TSA_VALIDITY_START},operator=${COSIGN_TSA_OPERATOR}" \
+            --tsa-config=EXACT:1 \
+            --out "$signing_config"
+          cosign trusted-root create \
+            --tsa="url=${COSIGN_TSA_URI},certificate-chain=${tsa_chain},start-time=${COSIGN_TSA_VALIDITY_START}" \
+            --out "$trusted_root"
+          [[ "$(sha256sum "$trusted_root" | awk '{print $1}')" == \
+            "$AUTHORITY_TRUSTED_ROOT_SHA256" ]]
+
+          jq -e \
+            --arg uri "$COSIGN_TSA_URI" \
+            --arg operator "$COSIGN_TSA_OPERATOR" \
+            --arg start "$COSIGN_TSA_VALIDITY_START" '
+              .mediaType == "application/vnd.dev.sigstore.signingconfig.v0.2+json" and
+              ((.caUrls // []) | length == 0) and
+              ((.oidcUrls // []) | length == 0) and
+              ((.rekorTlogUrls // []) | length == 0) and
+              (.tsaUrls | length == 1) and
+              .tsaUrls[0].url == $uri and
+              .tsaUrls[0].majorApiVersion == 1 and
+              .tsaUrls[0].operator == $operator and
+              .tsaUrls[0].validFor.start == $start and
+              .tsaConfig.selector == "EXACT" and .tsaConfig.count == 1
+            ' "$signing_config" >/dev/null
+          jq -e \
+            --arg uri "$COSIGN_TSA_URI" \
+            --arg start "$COSIGN_TSA_VALIDITY_START" '
+              (.tlogs | type == "array" and length == 0) and
+              (.certificateAuthorities | type == "array" and length == 0) and
+              (.ctlogs | type == "array" and length == 0) and
+              (.timestampAuthorities | type == "array" and length == 1) and
+              .timestampAuthorities[0].uri == $uri and
+              .timestampAuthorities[0].validFor.start == $start and
+              (.timestampAuthorities[0].certChain.certificates | length >= 2)
+            ' "$trusted_root" >/dev/null
+
+      # A rerun after the irreversible publication boundary never rebuilds or
+      # resigns. Before adoption, the protected Azure identity independently
+      # derives the KMS key and private-TSA root; the public release must carry
+      # those exact trust bytes, not a self-asserted replacement key.
+      - name: Adopt and publicly verify an exact existing immutable release
+        if: ${{ steps.authority.outputs.mode == 'adopt-published' }}
+        env:
+          AUTHORITY_PUBLIC_KEY_SHA256: ${{ steps.signing_policy.outputs.public_key_sha256 }}
+          AUTHORITY_TRUSTED_ROOT_SHA256: ${{ steps.signing_policy.outputs.trusted_root_sha256 }}
+          EXPECTED_MANIFEST_SHA256: ${{ steps.select.outputs.manifest_sha256 }}
+          EXPECTED_CONTENT_SHA256: ${{ steps.select.outputs.content_sha256 }}
+          MANIFEST_NAME: ${{ steps.authority.outputs.manifest_name }}
+        run: |
+          set -euo pipefail
+          public_config="${RUNNER_TEMP}/adoption-public-registry-auth"
+          manifest="${RUNNER_TEMP}/adoption-release-manifest.json"
+          mkdir -p "$public_config"
+          printf '%s\n' '{}' > "${public_config}/config.json"
+          curl --fail --location --silent --show-error \
+            --retry 5 --retry-all-errors \
+            --output "$manifest" \
+            "https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/${MANIFEST_NAME}"
+          manifest_sha256=$(sha256sum "$manifest" | awk '{print $1}')
+          derived_public_key_sha256=$(sha256sum \
+            "${RUNNER_TEMP}/release-kms-public.pem" | awk '{print $1}')
+          derived_trusted_root_sha256=$(sha256sum \
+            "${RUNNER_TEMP}/release-trusted-root.json" | awk '{print $1}')
+          [[ "$manifest_sha256" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$derived_public_key_sha256" == "$AUTHORITY_PUBLIC_KEY_SHA256" ]]
+          [[ "$derived_trusted_root_sha256" == "$AUTHORITY_TRUSTED_ROOT_SHA256" ]]
+          jq -e \
+            --arg public_key_sha256 "$AUTHORITY_PUBLIC_KEY_SHA256" \
+            --arg trusted_root_sha256 "$AUTHORITY_TRUSTED_ROOT_SHA256" '
+              .trust.mode == "kms-public-key-private-tsa" and
+              .trust.cosignVersion == "3.1.3" and
+              .trust.publicKeySha256 == $public_key_sha256 and
+              .trust.trustedRootSha256 == $trusted_root_sha256
+            ' "$manifest" >/dev/null
+          env -u GH_TOKEN -u GITHUB_TOKEN \
+            DOCKER_CONFIG="$public_config" \
+            PACK_RELEASE_RETRY_DELAY_SECONDS=10 \
+            scripts/verify-published-pack-release.sh \
+              --repository "$GITHUB_REPOSITORY" \
+              --tag "$RELEASE_TAG" \
+              --source-sha "$SOURCE_SHA" \
+              --expected-manifest-sha256 "$EXPECTED_MANIFEST_SHA256" \
+              --expected-content-sha256 "$EXPECTED_CONTENT_SHA256" \
+              --manifest-name "$MANIFEST_NAME" \
+              --manifest-sha256 "$manifest_sha256" \
+              --public-key-sha256 "$AUTHORITY_PUBLIC_KEY_SHA256" \
+              --trusted-root-sha256 "$AUTHORITY_TRUSTED_ROOT_SHA256" \
+              --validator "${RUNNER_TEMP}/cognic-pack-validate"
+
+      - name: Prove real KMS signing and fail-closed private TSA verification
+        if: ${{ steps.authority.outputs.mode != 'adopt-published' }}
+        run: |
+          set -euo pipefail
+          scripts/cosign-self-test.sh \
+            --key "$COSIGN_KMS_KEY_URI" \
+            --public-key "${RUNNER_TEMP}/release-kms-public.pem" \
+            --signing-config "${RUNNER_TEMP}/release-signing-config.json" \
+            --trusted-root "${RUNNER_TEMP}/release-trusted-root.json"
+
+      - name: Log in to GHCR with bounded retry
+        if: ${{ steps.authority.outputs.mode != 'adopt-published' }}
+        env:
+          REGISTRY_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$DOCKER_CONFIG"
+          chmod 0700 "$DOCKER_CONFIG"
+          logged_in=false
+          for attempt in 1 2 3 4; do
+            if printf '%s' "$REGISTRY_TOKEN" | oras login ghcr.io \
+              --username "$GITHUB_ACTOR" --password-stdin; then
+              logged_in=true
+              break
+            fi
+            [[ "$attempt" == 4 ]] || sleep "$((attempt * 2))"
+          done
+          [[ "$logged_in" == true ]]
+
+      - name: Build twice, publish OCI, sign, verify, and stage exact assets
+        if: ${{ steps.authority.outputs.mode != 'adopt-published' }}
+        id: stage
+        env:
+          OCI_REPOSITORY: ${{ steps.select.outputs.oci_repository }}
+          PACK_NAME: ${{ steps.select.outputs.pack_name }}
+          PACK_VERSION: ${{ steps.select.outputs.pack_version }}
+          EXPECTED_MANIFEST_SHA256: ${{ steps.select.outputs.manifest_sha256 }}
+          EXPECTED_CONTENT_SHA256: ${{ steps.select.outputs.content_sha256 }}
+        run: |
+          set -euo pipefail
+          output_dir="${RUNNER_TEMP}/release-assets"
+          mkdir -p "$output_dir"
+          scripts/stage-pack-release.sh \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --source-sha "$SOURCE_SHA" \
+            --source-repository "$SOURCE_REPOSITORY" \
+            --tag "$RELEASE_TAG" \
+            --validator "${RUNNER_TEMP}/cognic-pack-validate" \
+            --output-dir "$output_dir" \
+            --oci-repository "$OCI_REPOSITORY" \
+            --key "$COSIGN_KMS_KEY_URI" \
+            --public-key "${RUNNER_TEMP}/release-kms-public.pem" \
+            --signing-config "${RUNNER_TEMP}/release-signing-config.json" \
+            --trusted-root "${RUNNER_TEMP}/release-trusted-root.json"
+
+          mapfile -d '' manifests < <(
+            find "$output_dir" -mindepth 1 -maxdepth 1 \
+              -type f -name '*.release.json' -print0
+          )
+          [[ "${#manifests[@]}" == 1 ]]
+          manifest_name=${manifests[0]##*/}
+          manifest_sha256=$(sha256sum "${manifests[0]}" | awk '{print $1}')
+          [[ "$manifest_name" == "${PACK_NAME}-${PACK_VERSION}.release.json" ]]
+          [[ "$manifest_sha256" =~ ^[0-9a-f]{64}$ ]]
+          jq -e \
+            --arg manifest_sha256 "$EXPECTED_MANIFEST_SHA256" \
+            --arg content_sha256 "$EXPECTED_CONTENT_SHA256" '
+              .pack.manifestSha256 == $manifest_sha256 and
+              .pack.contentSha256 == $content_sha256
+            ' "${manifests[0]}" >/dev/null
+          [[ "$(find "$output_dir" -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d '[:space:]')" == 7 ]]
+          {
+            printf 'manifest_name=%s\n' "$manifest_name"
+            printf 'manifest_sha256=%s\n' "$manifest_sha256"
+          } >> "$GITHUB_OUTPUT"
+
+      # GHCR package visibility is a repository prerequisite. This check uses
+      # a fresh empty auth directory, so a private package fails before any
+      # GitHub Release draft is created.
+      - name: Verify the signed OCI digest through the anonymous public path
+        if: ${{ steps.authority.outputs.mode != 'adopt-published' }}
+        env:
+          AUTHORITY_PUBLIC_KEY_SHA256: ${{ steps.signing_policy.outputs.public_key_sha256 }}
+          AUTHORITY_TRUSTED_ROOT_SHA256: ${{ steps.signing_policy.outputs.trusted_root_sha256 }}
+          EXPECTED_MANIFEST_SHA256: ${{ steps.select.outputs.manifest_sha256 }}
+          EXPECTED_CONTENT_SHA256: ${{ steps.select.outputs.content_sha256 }}
+          MANIFEST_NAME: ${{ steps.stage.outputs.manifest_name }}
+        run: |
+          set -euo pipefail
+          manifest="${RUNNER_TEMP}/release-assets/${MANIFEST_NAME}"
+          oci_ref=$(jq -er '.oci.reference' "$manifest")
+          oci_digest=$(jq -er '.oci.digest' "$manifest")
+          content_sha256=$(jq -er '.pack.contentSha256' "$manifest")
+          jq -e \
+            --arg public_key_sha256 "$AUTHORITY_PUBLIC_KEY_SHA256" \
+            --arg trusted_root_sha256 "$AUTHORITY_TRUSTED_ROOT_SHA256" \
+            --arg manifest_sha256 "$EXPECTED_MANIFEST_SHA256" \
+            --arg content_sha256 "$EXPECTED_CONTENT_SHA256" '
+              .trust.publicKeySha256 == $public_key_sha256 and
+              .trust.trustedRootSha256 == $trusted_root_sha256 and
+              .pack.manifestSha256 == $manifest_sha256 and
+              .pack.contentSha256 == $content_sha256
+            ' "$manifest" >/dev/null
+          public_config="${RUNNER_TEMP}/public-registry-auth"
+          mkdir -p "$public_config"
+          printf '%s\n' '{}' > "${public_config}/config.json"
+
+          public_manifest="${RUNNER_TEMP}/public-oci-manifest.json"
+          fetched=false
+          for attempt in 1 2 3 4; do
+            rm -f -- "$public_manifest"
+            if DOCKER_CONFIG="$public_config" oras manifest fetch \
+              "$oci_ref" > "$public_manifest"; then
+              fetched=true
+              break
+            fi
+            [[ "$attempt" == 4 ]] || sleep "$((attempt * 2))"
+          done
+          [[ "$fetched" == true ]]
+          jq -e --arg layer "$(jq -er '.oci.layerDigest' "$manifest")" '
+            .artifactType == "application/vnd.cognic.pack.v1" and
+            (.layers | length == 1) and .layers[0].digest == $layer
+          ' "$public_manifest" >/dev/null
+
+          verification="${RUNNER_TEMP}/public-oci-verification.json"
+          verified=false
+          for attempt in 1 2 3 4; do
+            rm -f -- "$verification"
+            if DOCKER_CONFIG="$public_config" cosign verify \
+              --key "${RUNNER_TEMP}/release-kms-public.pem" \
+              --insecure-ignore-tlog=true \
+              --trusted-root "${RUNNER_TEMP}/release-trusted-root.json" \
+              --use-signed-timestamps \
+              --output=json \
+              "$oci_ref" > "$verification"; then
+              verified=true
+              break
+            fi
+            [[ "$attempt" == 4 ]] || sleep "$((attempt * 2))"
+          done
+          [[ "$verified" == true ]]
+          jq -e --arg digest "$oci_digest" --arg content "$content_sha256" '
+            type == "array" and length > 0 and
+            all(.[];
+              .critical.image["docker-manifest-digest"] == $digest and
+              .optional["dev.cognic.pack.content-sha256"] == $content)
+          ' "$verification" >/dev/null
+
+      - name: Create draft, upload exact assets, and verify remote bytes
+        if: ${{ steps.authority.outputs.mode != 'adopt-published' }}
+        env:
+          AUTHORITY_MODE: ${{ steps.authority.outputs.mode }}
+          EXPECTED_MANIFEST_SHA256: ${{ steps.select.outputs.manifest_sha256 }}
+          EXPECTED_CONTENT_SHA256: ${{ steps.select.outputs.content_sha256 }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_MANIFEST_SHA256: ${{ steps.stage.outputs.manifest_sha256 }}
+        run: |
+          set -euo pipefail
+          output_dir="${RUNNER_TEMP}/release-assets"
+          notes="${RUNNER_TEMP}/release-notes.md"
+          printf 'Cognic pack release `%s` with signed tar and OCI artifacts.\n\nSource-SHA: `%s`\nSource-Pack-Manifest-SHA256: `%s`\nSource-Pack-Content-SHA256: `%s`\nRelease-Manifest-SHA256: `%s`\n' \
+            "$RELEASE_TAG" "$SOURCE_SHA" "$EXPECTED_MANIFEST_SHA256" \
+            "$EXPECTED_CONTENT_SHA256" "$RELEASE_MANIFEST_SHA256" > "$notes"
+
+          mapfile -d '' assets < <(
+            find "$output_dir" -mindepth 1 -maxdepth 1 -type f -print0 | sort -z
+          )
+          [[ "${#assets[@]}" == 7 ]]
+          expected='{}'
+          for asset in "${assets[@]}"; do
+            name=${asset##*/}
+            [[ "$name" =~ ^[A-Za-z0-9][A-Za-z0-9._-]+$ ]]
+            size=$(stat -c '%s' "$asset")
+            digest="sha256:$(sha256sum "$asset" | awk '{print $1}')"
+            expected=$(jq -c \
+              --arg name "$name" --arg digest "$digest" --argjson size "$size" \
+              '. + {($name): {digest: $digest, size: $size}}' <<<"$expected")
+          done
+          printf '%s\n' "$expected" > "${RUNNER_TEMP}/expected-release-assets.json"
+
+          read_releases() {
+            local attempt
+            local normalized="${RUNNER_TEMP}/draft-releases.json"
+            local pages="${RUNNER_TEMP}/draft-release-pages.json"
+            for attempt in 1 2 3 4; do
+              rm -f -- "$normalized" "$pages"
+              if gh api --paginate \
+                -H 'Accept: application/vnd.github+json' \
+                -H 'X-GitHub-Api-Version: 2026-03-10' \
+                "repos/${GITHUB_REPOSITORY}/releases?per_page=100" > "$pages" && \
+                jq -s 'add // []' "$pages" > "$normalized"; then
+                cat "$normalized"
+                return 0
+              fi
+              [[ "$attempt" == 4 ]] || sleep "$((attempt * 2))"
+            done
+            return 1
+          }
+          release_matches() {
+            read_releases | jq -c --arg tag "$RELEASE_TAG" \
+              '[.[] | select(.tag_name == $tag)]'
+          }
+          exact_draft() {
+            jq -e --arg tag "$RELEASE_TAG" --arg source "$SOURCE_SHA" '
+              length == 1 and .[0].draft == true and .[0].prerelease == false and
+              .[0].tag_name == $tag and .[0].target_commitish == $source
+            ' >/dev/null
+          }
+
+          matches=$(release_matches)
+          created=false
+          if [[ "$AUTHORITY_MODE" == resume-draft ]]; then
+            exact_draft <<<"$matches"
+            created=true
+          else
+            [[ "$AUTHORITY_MODE" == publish ]]
+            [[ "$(jq -r 'length' <<<"$matches")" == 0 ]]
+            for attempt in 1 2 3 4; do
+              if gh release create "$RELEASE_TAG" \
+                --repo "$GITHUB_REPOSITORY" \
+                --target "$SOURCE_SHA" \
+                --verify-tag \
+                --title "$RELEASE_TAG" \
+                --notes-file "$notes" \
+                --draft; then
+                created=true
+                break
+              fi
+              # A transport error can occur after the server accepted creation.
+              matches=$(release_matches)
+              if exact_draft <<<"$matches"; then
+                created=true
+                break
+              fi
+              [[ "$(jq -r 'length' <<<"$matches")" == 0 ]]
+              [[ "$attempt" == 4 ]] || sleep "$((attempt * 2))"
+            done
+          fi
+          [[ "$created" == true ]]
+
+          normalized=false
+          for attempt in 1 2 3 4; do
+            if gh release edit "$RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "$RELEASE_TAG" \
+              --notes-file "$notes" \
+              --draft=true \
+              --prerelease=false \
+              --latest=false; then
+              normalized=true
+              break
+            fi
+            matches=$(release_matches)
+            if exact_draft <<<"$matches" && jq -e \
+              --arg title "$RELEASE_TAG" \
+              --rawfile notes "$notes" '
+                .[0].name == $title and .[0].body == $notes
+              ' <<<"$matches" >/dev/null; then
+              normalized=true
+              break
+            fi
+            [[ "$attempt" == 4 ]] || sleep "$((attempt * 2))"
+          done
+          [[ "$normalized" == true ]]
+
+          # Drafts are deliberately mutable. On a failed-job rerun, remove
+          # every old partial asset only after exact draft identity is proven,
+          # then replace the complete set from the newly verified staging area.
+          matches=$(release_matches)
+          exact_draft <<<"$matches"
+          mapfile -t stale_asset_ids < <(jq -r '.[0].assets[].id' <<<"$matches")
+          for asset_id in "${stale_asset_ids[@]}"; do
+            [[ "$asset_id" =~ ^[1-9][0-9]*$ ]]
+            deleted=false
+            for attempt in 1 2 3 4; do
+              if gh api --method DELETE \
+                -H 'Accept: application/vnd.github+json' \
+                -H 'X-GitHub-Api-Version: 2026-03-10' \
+                "repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}"; then
+                deleted=true
+                break
+              fi
+              matches=$(release_matches)
+              exact_draft <<<"$matches"
+              if ! jq -e --argjson id "$asset_id" \
+                'any(.[0].assets[]; .id == $id)' <<<"$matches" >/dev/null; then
+                deleted=true
+                break
+              fi
+              [[ "$attempt" == 4 ]] || sleep "$((attempt * 2))"
+            done
+            [[ "$deleted" == true ]]
+          done
+
+          emptied=false
+          for attempt in 1 2 3 4; do
+            matches=$(release_matches)
+            exact_draft <<<"$matches"
+            if [[ "$(jq -r '.[0].assets | length' <<<"$matches")" == 0 ]]; then
+              emptied=true
+              break
+            fi
+            [[ "$attempt" == 4 ]] || sleep "$((attempt * 2))"
+          done
+          [[ "$emptied" == true ]]
+
+          uploaded=false
+          for attempt in 1 2 3 4; do
+            if gh release upload "$RELEASE_TAG" "${assets[@]}" \
+              --repo "$GITHUB_REPOSITORY" --clobber; then
+              uploaded=true
+              break
+            fi
+            [[ "$attempt" == 4 ]] || sleep "$((attempt * 2))"
+          done
+          if [[ "$uploaded" != true ]]; then
+            printf '%s\n' \
+              'upload returned errors; checking authoritative draft state for an accepted final attempt'
+          fi
+
+          settled=false
+          for attempt in $(seq 1 18); do
+            matches=$(release_matches)
+            if jq -e \
+              --arg tag "$RELEASE_TAG" \
+              --arg title "$RELEASE_TAG" \
+              --arg source "$SOURCE_SHA" \
+              --rawfile notes "$notes" \
+              --argjson expected "$expected" '
+                length == 1 and .[0].draft == true and .[0].prerelease == false and
+                .[0].name == $title and .[0].body == $notes and
+                .[0].tag_name == $tag and .[0].target_commitish == $source and
+                (([.[0].assets[].name] | sort) == ($expected | keys | sort)) and
+                all(.[0].assets[];
+                  . as $asset |
+                  .state == "uploaded" and
+                  .size == $expected[$asset.name].size and
+                  ((.digest == null) or
+                   (.digest == $expected[$asset.name].digest)))
+              ' <<<"$matches" >/dev/null; then
+              settled=true
+              break
+            fi
+            [[ "$attempt" == 18 ]] || sleep 5
+          done
+          [[ "$settled" == true ]]
+
+          roundtrip="${RUNNER_TEMP}/release-roundtrip"
+          downloaded=false
+          for attempt in 1 2 3 4; do
+            rm -rf -- "$roundtrip"
+            mkdir -p "$roundtrip"
+            if gh release download "$RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" --dir "$roundtrip"; then
+              downloaded=true
+              break
+            fi
+            [[ "$attempt" == 4 ]] || sleep "$((attempt * 2))"
+          done
+          [[ "$downloaded" == true ]]
+          find "$output_dir" -mindepth 1 -maxdepth 1 -type f -printf '%f\n' | \
+            sort > "${RUNNER_TEMP}/local-asset-names"
+          find "$roundtrip" -mindepth 1 -maxdepth 1 -type f -printf '%f\n' | \
+            sort > "${RUNNER_TEMP}/remote-asset-names"
+          diff -u "${RUNNER_TEMP}/local-asset-names" \
+            "${RUNNER_TEMP}/remote-asset-names"
+          while IFS= read -r name; do
+            cmp -- "$output_dir/$name" "$roundtrip/$name"
+          done < "${RUNNER_TEMP}/local-asset-names"
+          (
+            cd "$roundtrip"
+            sha256sum --check --strict --status SHA256SUMS
+          )
+
+      - name: Publish the exact immutable release
+        if: ${{ steps.authority.outputs.mode != 'adopt-published' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          notes="${RUNNER_TEMP}/release-notes.md"
+          expected=$(<"${RUNNER_TEMP}/expected-release-assets.json")
+          jq -e 'type == "object" and length == 7' <<<"$expected" >/dev/null
+          published=false
+          for attempt in $(seq 1 18); do
+            gh release edit "$RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "$RELEASE_TAG" \
+              --notes-file "$notes" \
+              --draft=false \
+              --prerelease=false \
+              --latest=false || true
+            final="${RUNNER_TEMP}/published-release.json"
+            if gh api \
+              -H 'Accept: application/vnd.github+json' \
+              -H 'X-GitHub-Api-Version: 2026-03-10' \
+              "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" > "$final" && \
+              jq -e \
+                --arg tag "$RELEASE_TAG" \
+                --arg title "$RELEASE_TAG" \
+                --arg source "$SOURCE_SHA" \
+                --rawfile notes "$notes" \
+                --argjson expected "$expected" '
+                .tag_name == $tag and .target_commitish == $source and
+                .name == $title and .body == $notes and
+                .draft == false and .prerelease == false and .immutable == true and
+                (([.assets[].name] | sort) == ($expected | keys | sort)) and
+                all(.assets[];
+                  . as $asset |
+                  .state == "uploaded" and
+                  .size == $expected[$asset.name].size and
+                  ((.digest == null) or
+                   (.digest == $expected[$asset.name].digest)))
+              ' "$final" >/dev/null; then
+              published=true
+              break
+            fi
+            [[ "$attempt" == 18 ]] || sleep 5
+          done
+          [[ "$published" == true ]]
+
+      # Deliberately no GH_TOKEN/GITHUB_TOKEN and an empty registry auth file:
+      # this is the path an unauthenticated pack consumer sees.
+      - name: Verify what was just published through the public consumer path
+        if: ${{ steps.authority.outputs.mode != 'adopt-published' }}
+        env:
+          AUTHORITY_PUBLIC_KEY_SHA256: ${{ steps.signing_policy.outputs.public_key_sha256 }}
+          AUTHORITY_TRUSTED_ROOT_SHA256: ${{ steps.signing_policy.outputs.trusted_root_sha256 }}
+          EXPECTED_MANIFEST_SHA256: ${{ steps.select.outputs.manifest_sha256 }}
+          EXPECTED_CONTENT_SHA256: ${{ steps.select.outputs.content_sha256 }}
+          MANIFEST_NAME: ${{ steps.stage.outputs.manifest_name }}
+          MANIFEST_SHA256: ${{ steps.stage.outputs.manifest_sha256 }}
+        run: |
+          set -euo pipefail
+          public_config="${RUNNER_TEMP}/final-public-registry-auth"
+          mkdir -p "$public_config"
+          printf '%s\n' '{}' > "${public_config}/config.json"
+          [[ "$(sha256sum "${RUNNER_TEMP}/release-kms-public.pem" | awk '{print $1}')" == \
+            "$AUTHORITY_PUBLIC_KEY_SHA256" ]]
+          [[ "$(sha256sum "${RUNNER_TEMP}/release-trusted-root.json" | awk '{print $1}')" == \
+            "$AUTHORITY_TRUSTED_ROOT_SHA256" ]]
+          env -u GH_TOKEN -u GITHUB_TOKEN \
+            DOCKER_CONFIG="$public_config" \
+            PACK_RELEASE_RETRY_DELAY_SECONDS=10 \
+            scripts/verify-published-pack-release.sh \
+              --repository "$GITHUB_REPOSITORY" \
+              --tag "$RELEASE_TAG" \
+              --source-sha "$SOURCE_SHA" \
+              --expected-manifest-sha256 "$EXPECTED_MANIFEST_SHA256" \
+              --expected-content-sha256 "$EXPECTED_CONTENT_SHA256" \
+              --manifest-name "$MANIFEST_NAME" \
+              --manifest-sha256 "$MANIFEST_SHA256" \
+              --public-key-sha256 "$AUTHORITY_PUBLIC_KEY_SHA256" \
+              --trusted-root-sha256 "$AUTHORITY_TRUSTED_ROOT_SHA256" \
+              --validator "${RUNNER_TEMP}/cognic-pack-validate"
+
+      - name: Remove credentials and release scratch data
+        if: always()
+        run: |
+          set -u
+          [[ -z "${AZURE_TOKEN_REFRESHER_PID:-}" ]] || \
+            kill "$AZURE_TOKEN_REFRESHER_PID" 2>/dev/null || true
+          oras logout ghcr.io >/dev/null 2>&1 || true
+          az logout >/dev/null 2>&1 || true
+          rm -rf -- \
+            "${RUNNER_TEMP}/adoption-public-registry-auth" \
+            "${RUNNER_TEMP}/adoption-release-manifest.json" \
+            "${RUNNER_TEMP}/azure-federated-token" \
+            "${RUNNER_TEMP}/azure-federated-token.tmp" \
+            "${RUNNER_TEMP}/cognic-pack-validate" \
+            "${RUNNER_TEMP}/cosign-linux-amd64" \
+            "${RUNNER_TEMP}/cosign-self-test.log" \
+            "${RUNNER_TEMP}/cosign-self-test-state" \
+            "${RUNNER_TEMP}/expected-release-assets.json" \
+            "${RUNNER_TEMP}/final-public-registry-auth" \
+            "${RUNNER_TEMP}/draft-release-pages.json" \
+            "${RUNNER_TEMP}/draft-releases.json" \
+            "${RUNNER_TEMP}/local-asset-names" \
+            "${RUNNER_TEMP}/oras-linux-amd64.tar.gz" \
+            "${RUNNER_TEMP}/public-oci-manifest.json" \
+            "${RUNNER_TEMP}/public-oci-verification.json" \
+            "${RUNNER_TEMP}/public-registry-auth" \
+            "${RUNNER_TEMP}/published-release.json" \
+            "${RUNNER_TEMP}/registry-auth" \
+            "${RUNNER_TEMP}/release-assets" \
+            "${RUNNER_TEMP}/release-kms-public.pem" \
+            "${RUNNER_TEMP}/release-notes.md" \
+            "${RUNNER_TEMP}/release-pages.json" \
+            "${RUNNER_TEMP}/release-roundtrip" \
+            "${RUNNER_TEMP}/release-signing-config.json" \
+            "${RUNNER_TEMP}/release-tools" \
+            "${RUNNER_TEMP}/release-trusted-root.json" \
+            "${RUNNER_TEMP}/release-tsa-chain.pem" \
+            "${RUNNER_TEMP}/remote-asset-names"

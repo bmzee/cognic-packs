@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+output=''
+url=''
+while (( $# > 0 )); do
+  case "$1" in
+    --output) output=${2:-}; shift 2 ;;
+    --fail|--location|--silent|--show-error|--retry-all-errors) shift ;;
+    --retry) shift 2 ;;
+    http*) url=$1; shift ;;
+    *) printf 'unexpected fake curl argument: %s\n' "$1" >&2; exit 2 ;;
+  esac
+done
+[[ -n "$output" && -n "$url" ]] || exit 2
+[[ -n "${FAKE_RELEASE_BASE_URL:-}" ]] || exit 2
+[[ "$url" == "${FAKE_RELEASE_BASE_URL}/"* ]] || exit 22
+asset=${url#"${FAKE_RELEASE_BASE_URL}/"}
+[[ "$asset" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || exit 22
+[[ -n "${FAKE_RELEASE_DIR:-}" ]] || exit 2
+[[ -z "${FAKE_CURL_LOG:-}" ]] || printf '%s\n' "$url" >> "$FAKE_CURL_LOG"
+source_file="${FAKE_RELEASE_DIR}/${asset}"
+[[ -f "$source_file" ]] || exit 22
+cp -- "$source_file" "$output"
