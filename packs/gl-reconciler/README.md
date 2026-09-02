@@ -39,7 +39,7 @@ below is a post-import readiness change; it does not rewrite that report.
 | 1 | Plugin author | Adapted | `Anthropic FSI` was normalized to the valid publisher identifier `anthropic-fsi`; attribution is preserved. |
 | 2 | Plugin description | Adapted | The importer copied “Finds breaks, traces root cause, routes for sign-off” into the generated root. The final wording keeps those three outcomes and narrows the source claim to the database-only v0. |
 | 3 | Plugin name | Adapted | `gl-reconciler` already satisfies Cognic identifier syntax, so normalization leaves the identity unchanged. |
-| 4 | Plugin version | Clean | `0.1.0` is preserved exactly. |
+| 4 | Plugin version | Adapted | The upstream plugin version is `0.1.0` and no pack content changed on import. The published Cognic pack is `0.1.1`: `0.1.0` was tagged twice while the release lane itself was being repaired and never produced a release, and this repository protects release tags against reuse. |
 | 5 | Implicit plugin host entry point | Adapted | The importer materialized `gl-reconciler-root`. Review found its tool-free generated instructions could not execute the copied workflow; the final root has only `query_database`, no delegation, and an explicit database/file boundary. |
 | 6 | `agents/gl-reconciler.md` agent | Clean | The importer preserved the upstream agent body and identity. The final instructions retain its break/trace/report intent while replacing unavailable MCP, file, and worker assumptions with a sequential read-only database workflow. |
 | 7 | Agent description | Clean | The upstream description was preserved by import. It is narrowed post-import so the directory does not promise unavailable GL/subledger or file sources. |
