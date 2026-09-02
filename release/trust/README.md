@@ -22,5 +22,5 @@ Current pinned material (fingerprints must equal `release/signing-authority.json
 
 | File | SHA-256 |
 |---|---|
-| `cognic-engine-release-kms-public.pem` | `5fbb5d97a16ac71771bdf505d855aa2c4496232572ec10ead22918446b6a5560` |
-| `cognic-private-tsa-trusted-root.json` | `129a87333c671ec53c86520f1778e929132b87fcfc270cd7b9c17d7bbc56952e` |
+| `release-kms-public.pem` | `5fbb5d97a16ac71771bdf505d855aa2c4496232572ec10ead22918446b6a5560` |
+| `cosign-trusted-root.json` | `129a87333c671ec53c86520f1778e929132b87fcfc270cd7b9c17d7bbc56952e` |

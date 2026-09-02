@@ -1,7 +1,26 @@
 {
-  "acceptanceCommit": "e24638dc586501695e0752d5dd41801b04531064",
-  "reason": "No public release at or after the canonical pack-validator release staging commit exists yet. It will be published as a release revision of the pinned engine (engine-v0.150.1-r2: same pinned engine binary, newer app evidence) mirrored byte-for-byte from the private cognic-app release to the public distribution repository bmzee/cognic-releases. This lock is intentionally fail-closed; do not replace it with a local build or an unsigned stand-in.",
+  "acceptanceCommit": "9e087bc47a20fb363f14aa18e09eacc4a4ba0705",
+  "archive": {
+    "name": "engine-0.150.1-evidence.tar.gz",
+    "sha256": "ea05949600bc48dfe9d37555d2bc5e5f50a4ac9b97291d591acc9b2229ac3f2d"
+  },
+  "baseUrl": "https://github.com/bmzee/cognic-releases/releases/download/engine-v0.150.1-r2",
+  "bundle": {
+    "name": "engine-0.150.1-evidence.tar.gz.sigstore.json",
+    "sha256": "effa4ef720725d1169cd3b7bcfb1fad7efbbbf378c55236891b8587d2c144de9"
+  },
+  "distributionRepository": "bmzee/cognic-releases",
+  "releaseTag": "engine-v0.150.1-r2",
+  "releaseVersion": "0.150.1",
   "schemaVersion": "1",
   "sourceRepository": "bmzee/cognic-app",
-  "status": "blocked"
+  "sourceSha": "9e087bc47a20fb363f14aa18e09eacc4a4ba0705",
+  "status": "ready",
+  "trust": {
+    "publicKey": "trust/release-kms-public.pem",
+    "publicKeySha256": "5fbb5d97a16ac71771bdf505d855aa2c4496232572ec10ead22918446b6a5560",
+    "trustedRoot": "trust/cosign-trusted-root.json",
+    "trustedRootSha256": "129a87333c671ec53c86520f1778e929132b87fcfc270cd7b9c17d7bbc56952e"
+  },
+  "validatorVersion": "0.1.0"
 }
