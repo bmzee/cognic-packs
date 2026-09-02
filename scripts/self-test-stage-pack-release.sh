@@ -42,7 +42,6 @@ oci_repository="ghcr.io/example/cognic-packs/pack-sha256-${pack_name_sha256}"
 printf '%s\n' 'fixture public key' > "${scratch}/public.pem"
 printf '%s\n' '{}' > "${scratch}/signing-config.json"
 jq -n '{
-  tlogs: [], certificateAuthorities: [], ctlogs: [],
   timestampAuthorities: [{
     uri: "https://tsa.example.test/api/v1/timestamp",
     certChain: {certificates: ["leaf", "root"]}

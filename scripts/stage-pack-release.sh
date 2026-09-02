@@ -90,9 +90,9 @@ oras_version=$("$oras_bin" version 2>&1) || fail ORAS_VERSION 'ORAS version prob
 grep -Eq '^Version:[[:space:]]+1\.3\.3$' <<<"$oras_version" || \
   fail ORAS_VERSION 'ORAS v1.3.3 is required'
 jq -e '
-  (.tlogs | type == "array" and length == 0) and
-  (.certificateAuthorities | type == "array" and length == 0) and
-  (.ctlogs | type == "array" and length == 0) and
+  ((.tlogs // []) | type == "array" and length == 0) and
+  ((.certificateAuthorities // []) | type == "array" and length == 0) and
+  ((.ctlogs // []) | type == "array" and length == 0) and
   (.timestampAuthorities | type == "array" and length == 1) and
   (.timestampAuthorities[0].uri | test("^https://")) and
   (.timestampAuthorities[0].certChain.certificates | type == "array" and length >= 2)
