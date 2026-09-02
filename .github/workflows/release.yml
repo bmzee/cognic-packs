@@ -484,6 +484,7 @@ jobs:
           tsa_chain="${RUNNER_TEMP}/release-tsa-chain.pem"
           signing_config="${RUNNER_TEMP}/release-signing-config.json"
           trusted_root="${RUNNER_TEMP}/release-trusted-root.json"
+          committed_root="release/trust/cosign-trusted-root.json"
 
           derived=false
           for attempt in 1 2 3 4; do
@@ -509,9 +510,22 @@ jobs:
             --tsa="url=${COSIGN_TSA_URI},api-version=1,start-time=${COSIGN_TSA_VALIDITY_START},operator=${COSIGN_TSA_OPERATOR}" \
             --tsa-config=EXACT:1 \
             --out "$signing_config"
+          # The trust anchor is a committed, hash-pinned artifact. `cosign
+          # trusted-root create` emits protojson, whose byte formatting is not
+          # stable across cosign builds (the same inputs produce `","` on one
+          # build and `", "` on another), so a REGENERATED document can never
+          # be hash-compared to the pinned one — that assertion failed closed
+          # on this lane's first real run. Verify with the pinned bytes, and
+          # prove each run that the document these signing parameters produce
+          # is semantically identical to them.
+          generated_root="${RUNNER_TEMP}/release-generated-trusted-root.json"
           cosign trusted-root create \
             --tsa="url=${COSIGN_TSA_URI},certificate-chain=${tsa_chain},start-time=${COSIGN_TSA_VALIDITY_START}" \
-            --out "$trusted_root"
+            --out "$generated_root"
+          printf '%s  %s\n' "$AUTHORITY_TRUSTED_ROOT_SHA256" "$committed_root" | \
+            sha256sum --check --strict --status
+          [[ "$(jq -S -c . "$generated_root")" == "$(jq -S -c . "$committed_root")" ]]
+          cp -- "$committed_root" "$trusted_root"
           [[ "$(sha256sum "$trusted_root" | awk '{print $1}')" == \
             "$AUTHORITY_TRUSTED_ROOT_SHA256" ]]
 
