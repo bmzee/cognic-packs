@@ -57,6 +57,27 @@ jobs:
             abort "mutable action references:\n#{failures.join("\n")}" unless failures.empty?
           '
 
+      # Parsing YAML and pinning action digests does not prove a workflow can
+      # RUN: an expression that reads a context unavailable at its position
+      # (for example `runner` in a job-level `env:`) is valid YAML, passes the
+      # digest check, and then fails the whole run before a single job starts.
+      # The release lane shipped exactly that defect and its first tag push
+      # produced a zero-job failure.
+      - name: Actionlint every workflow
+        run: |
+          set -euo pipefail
+          image='rhysd/actionlint@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667'
+          pulled=false
+          for attempt in 1 2 3 4; do
+            if docker pull "$image"; then pulled=true; break; fi
+            [[ "$attempt" == 4 ]] || sleep "$((attempt * 2))"
+          done
+          [[ "$pulled" == true ]]
+          version=$(docker run --rm "$image" -version | head -n 1)
+          [[ "$version" == 1.7.12 ]]
+          docker run --rm -v "${PWD}:/repo:ro" -w /repo "$image" -color \
+            .github/workflows/ci.yml .github/workflows/release.yml
+
       - name: Validate the committed signing authority contract
         run: |
           set -euo pipefail

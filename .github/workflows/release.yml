@@ -40,13 +40,19 @@ jobs:
       COSIGN_TSA_OPERATOR: ${{ vars.COSIGN_TSA_OPERATOR }}
       COSIGN_TSA_URI: ${{ vars.COSIGN_TSA_URI }}
       COSIGN_TSA_VALIDITY_START: ${{ vars.COSIGN_TSA_VALIDITY_START }}
-      DOCKER_CONFIG: ${{ runner.temp }}/registry-auth
       EXPECTED_RELEASE_ENVIRONMENT: release
       RELEASE_TAG: ${{ github.ref_name }}
       RELEASE_IMMUTABILITY_ENABLED: ${{ vars.RELEASE_IMMUTABILITY_ENABLED }}
       SOURCE_REPOSITORY: https://github.com/${{ github.repository }}
       SOURCE_SHA: ${{ github.sha }}
     steps:
+      # The `runner` context is unavailable in a job-level `env:` block: a
+      # workflow that reads it there is invalid and never starts a single job,
+      # which is how this lane failed silently on its first tag. Export the
+      # registry-auth directory here instead, before any step that uses it.
+      - name: Export the isolated registry-auth directory
+        run: printf 'DOCKER_CONFIG=%s/registry-auth\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+
       - name: Checkout the exact tagged source
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -749,6 +755,9 @@ jobs:
           set -euo pipefail
           output_dir="${RUNNER_TEMP}/release-assets"
           notes="${RUNNER_TEMP}/release-notes.md"
+          # The single quotes are the printf format string: the backticks are
+          # Markdown for the release notes and the %s are its placeholders.
+          # shellcheck disable=SC2016
           printf 'Cognic pack release `%s` with signed tar and OCI artifacts.\n\nSource-SHA: `%s`\nSource-Pack-Manifest-SHA256: `%s`\nSource-Pack-Content-SHA256: `%s`\nRelease-Manifest-SHA256: `%s`\n' \
             "$RELEASE_TAG" "$SOURCE_SHA" "$EXPECTED_MANIFEST_SHA256" \
             "$EXPECTED_CONTENT_SHA256" "$RELEASE_MANIFEST_SHA256" > "$notes"
