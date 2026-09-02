@@ -1,6 +1,6 @@
 ---
 name: month-end-closer plugin
-description: Accruals, roll-forwards, variance commentary
+description: The month-end-closer plugin's entry point — the agent you address first. It selects the imported close skill that matches your period-end task (accruals, roll-forwards, or variance commentary) and applies it; it holds no tools of its own, so it never reads or changes bank data directly.
 model_tier: cloud
 tool_allowlist: []
 skills_dir: skills
