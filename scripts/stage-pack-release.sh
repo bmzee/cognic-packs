@@ -355,7 +355,6 @@ sign_oci() {
     --bundle "$oci_bundle" \
     --signing-config "$signing_config" \
     --trusted-root "$trusted_root" \
-    --tlog-upload=false \
     --annotations "dev.cognic.pack.content-sha256=${content_sha256}" \
     "$oci_ref" >/dev/null
 }
@@ -366,6 +365,14 @@ for attempt in 1 2 3 4; do
 done
 [[ "$signed" == true && -s "$oci_bundle" && -f "$oci_bundle" && ! -L "$oci_bundle" ]] || \
   fail SIGNATURE 'OCI KMS/private-TSA signing failed after four bounded attempts'
+# cosign 3.1.3 refuses `--tlog-upload=false` together with `--signing-config`
+# ("provide a signing config with no Rekor URLs instead"), which is exactly
+# what this lane provides. The absence of a transparency-log entry is
+# therefore a property of the signing config, and it is asserted here on the
+# produced bundle rather than requested through an unsupported flag.
+jq -e '((.verificationMaterial.tlogEntries // []) | length == 0)' \
+  "$oci_bundle" >/dev/null || \
+  fail SIGNATURE 'OCI signature bundle carries a transparency-log entry'
 jq -e 'type == "object"' "$oci_bundle" >/dev/null || fail SIGNATURE 'OCI signature bundle is not a JSON object'
 
 verification_json="${scratch}/oci-verification.json"
@@ -406,6 +413,9 @@ for attempt in 1 2 3 4; do
 done
 [[ "$blob_signed" == true && -s "$archive_bundle" && -f "$archive_bundle" && ! -L "$archive_bundle" ]] || \
   fail SIGNATURE 'tarball KMS/private-TSA signing failed after four bounded attempts'
+jq -e '((.verificationMaterial.tlogEntries // []) | length == 0)' \
+  "$archive_bundle" >/dev/null || \
+  fail SIGNATURE 'archive signature bundle carries a transparency-log entry'
 if ! "$cosign_bin" verify-blob \
   --bundle "$archive_bundle" \
   --key "$public_key" \
