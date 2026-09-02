@@ -1,6 +1,6 @@
 ---
 name: gl-reconciler
-description: Reconciles read-only, database-resident banking sources, identifies exact breaks, and produces a grounded exception report without posting entries.
+description: Reconciles read-only, database-resident banking sources for a trade date, identifies exact breaks between ledger and subledger, traces each break to its evidence, and produces a grounded exception report for sign-off — without ever posting an entry.
 model_tier: local
 tool_allowlist:
   - query_database

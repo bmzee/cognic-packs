@@ -1,6 +1,6 @@
 ---
 name: kyc-screener plugin
-description: Parses onboarding docs, runs the rules engine, flags gaps
+description: The kyc-screener plugin's entry point — the agent you address first. It selects the imported KYC skill that matches your onboarding or periodic-refresh task and applies it; it holds no tools of its own, so it never reads or changes bank data directly.
 model_tier: cloud
 tool_allowlist: []
 skills_dir: skills
