@@ -76,7 +76,9 @@ jq -e '
     (.sourceRepository | ascii_downcase)) and
   (.releaseTag | test("^[A-Za-z0-9][A-Za-z0-9._-]+$")) and
   (.releaseVersion | test("^[0-9]+\\.[0-9]+\\.[0-9]+$")) and
-  (.releaseTag == ("engine-v" + .releaseVersion)) and
+  ((.releaseTag == ("engine-v" + .releaseVersion)) or
+    (.releaseVersion as $release_version | .releaseTag |
+      test("^engine-v" + ($release_version | gsub("\\."; "\\.")) + "-r([2-9]|[1-9][0-9]+)$"))) and
   (.validatorVersion | test("^[0-9]+\\.[0-9]+\\.[0-9]+$")) and
   (.sourceSha | test("^[0-9a-f]{40}$")) and
   .sourceSha == .acceptanceCommit and

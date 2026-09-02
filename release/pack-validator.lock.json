@@ -1,6 +1,6 @@
 {
   "acceptanceCommit": "e24638dc586501695e0752d5dd41801b04531064",
-  "reason": "No public cognic-app release at or after the canonical pack-validator release staging commit exists yet. This lock is intentionally fail-closed; do not replace it with a local build or an unsigned stand-in.",
+  "reason": "No public release at or after the canonical pack-validator release staging commit exists yet. It will be published as a release revision of the pinned engine (engine-v0.150.1-r2: same pinned engine binary, newer app evidence) mirrored byte-for-byte from the private cognic-app release to the public distribution repository bmzee/cognic-releases. This lock is intentionally fail-closed; do not replace it with a local build or an unsigned stand-in.",
   "schemaVersion": "1",
   "sourceRepository": "bmzee/cognic-app",
   "status": "blocked"

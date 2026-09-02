@@ -207,6 +207,21 @@ A ready lock has only these top-level fields:
 }
 ```
 
+### Release revisions
+
+The private `cognic-app` lane may re-release the **same pinned engine** with
+newer application evidence as `engine-v<version>-r<n>` (`n ≥ 2`; the base
+release is the implicit revision 1). A revision carries the identical pinned
+engine binary (the lane proves per-arch hash equality against the base
+release before publishing) and newer supervisor/validator evidence. The lock
+admits exactly `engine-v<releaseVersion>` or `engine-v<releaseVersion>-r<n>`
+with `n` a positive integer ≥ 2 and no leading zeros; every other suffix is
+rejected by the strict lock schema (self-test cases `revision` and
+`malformed_revision`). Public distribution is `bmzee/cognic-releases`, a
+distribution-only repository that never holds source; the reviewer mirrors
+the sealed archive and bundle byte-for-byte and verifies the public bytes
+before flipping this lock to `ready`.
+
 ### Current bootstrap blocker
 
 The checked-in lock currently has `status: blocked`: there is no publicly

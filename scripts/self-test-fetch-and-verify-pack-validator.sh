@@ -114,9 +114,11 @@ jq -n --arg sha256 "$(sha256sum "$archive" | awk '{print $1}')" \
 write_lock() {
   local archive_sha=$1
   local distribution_repository=${2:-bmzee/cognic-packs}
-  local distribution_base_url=${3:-https://github.com/${distribution_repository}/releases/download/engine-v9.8.7}
+  local release_tag=${4:-engine-v9.8.7}
+  local distribution_base_url=${3:-https://github.com/${distribution_repository}/releases/download/${release_tag}}
   jq -S -n \
     --arg acceptance_commit "$acceptance_commit" \
+    --arg release_tag "$release_tag" \
     --arg archive_sha "$archive_sha" \
     --arg bundle_sha "$(sha256sum "${archive}.sigstore.json" | awk '{print $1}')" \
     --arg distribution_base_url "$distribution_base_url" \
@@ -130,7 +132,7 @@ write_lock() {
       schemaVersion: "1",
       status: "ready",
       sourceRepository: "bmzee/cognic-app",
-      releaseTag: "engine-v9.8.7",
+      releaseTag: $release_tag,
       releaseVersion: "9.8.7",
       validatorVersion: "0.1.0",
       sourceSha: $source_sha,
@@ -149,7 +151,8 @@ write_lock() {
 
 run_fetch() {
   local output=$1
-  FAKE_RELEASE_BASE_URL=https://github.com/bmzee/cognic-packs/releases/download/engine-v9.8.7 \
+  local release_tag=${2:-engine-v9.8.7}
+  FAKE_RELEASE_BASE_URL="https://github.com/bmzee/cognic-packs/releases/download/${release_tag}" \
   FAKE_RELEASE_DIR="$release_dir" \
   FAKE_CURL_LOG="${scratch}/curl.log" \
   FAKE_COSIGN_LOG="${scratch}/cosign.log" \
@@ -254,6 +257,30 @@ write_lock "$archive_sha"
 run_fetch "${scratch}/validator-source-distribution-restored" >/dev/null || \
   fail RESTORE 'restored source/distribution separation did not return the gate to green'
 
+# Release revisions: the same pinned engine re-released with newer app
+# evidence is published as engine-v<version>-r<n> (n >= 2). The lock admits
+# exactly that shape; r1 (the implicit base) and any other suffix stay red.
+write_lock "$archive_sha" bmzee/cognic-packs \
+  https://github.com/bmzee/cognic-packs/releases/download/engine-v9.8.7-r2 engine-v9.8.7-r2
+revision_output=$(run_fetch "${scratch}/validator-revision" engine-v9.8.7-r2) || \
+  fail REVISION "signed revision release engine-v9.8.7-r2 was refused: ${revision_output}"
+grep -Fq 'PACK_VALIDATOR_FETCH_OK:' <<<"$revision_output" || \
+  fail REVISION 'revision fetch omitted its success marker'
+for bad_tag in engine-v9.8.7-r1 engine-v9.8.7-r0 engine-v9.8.7-r02 engine-v9x8x7-r2 engine-v9.8.9-r2; do
+  write_lock "$archive_sha" bmzee/cognic-packs \
+    "https://github.com/bmzee/cognic-packs/releases/download/${bad_tag}" "$bad_tag"
+  if bad_revision_output=$(run_fetch "${scratch}/validator-revision-${bad_tag}" "$bad_tag" 2>&1); then
+    fail MUTATION "malformed revision tag ${bad_tag} unexpectedly passed"
+  fi
+  grep -Fq 'PACK_VALIDATOR_FETCH_FAIL[LOCK]' <<<"$bad_revision_output" || \
+    fail MUTATION "revision tag ${bad_tag} failed without LOCK: ${bad_revision_output}"
+  [[ ! -e "${scratch}/validator-revision-${bad_tag}" ]] || \
+    fail TRANSACTION "revision tag ${bad_tag} left an executable output"
+done
+write_lock "$archive_sha"
+run_fetch "${scratch}/validator-revision-restored" >/dev/null || \
+  fail RESTORE 'restored base release tag did not return the gate to green'
+
 # Required mutation proof: corrupt the pinned digest, observe red, restore it,
 # and prove the identical signed fixture returns to green.
 write_lock ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
@@ -329,4 +356,4 @@ grep -Fq 'PACK_VALIDATOR_FETCH_FAIL[DOWNLOAD]' <<<"$missing_output" || \
   fail MUTATION "missing artifact failed without the DOWNLOAD marker: ${missing_output}"
 
 printf '%s\n' \
-  'PACK_VALIDATOR_FETCH_SELF_TEST_OK: valid=green combined_evidence=green stale_source=red distribution_mismatch=red source_as_distribution=red corrupt_digest=red restored=green extra_validator=red verification_cut=red missing_artifact=red'
+  'PACK_VALIDATOR_FETCH_SELF_TEST_OK: valid=green combined_evidence=green stale_source=red distribution_mismatch=red source_as_distribution=red revision=green malformed_revision=red corrupt_digest=red restored=green extra_validator=red verification_cut=red missing_artifact=red'
