@@ -48,9 +48,9 @@ version_output=$("$cosign_bin" version 2>&1) || fail COSIGN_VERSION 'cosign vers
 grep -Fxq 'GitVersion:    v3.1.3' <<<"$version_output" || \
   fail COSIGN_VERSION 'cosign v3.1.3 is required'
 jq -e '
-  (.tlogs | type == "array" and length == 0) and
-  (.certificateAuthorities | type == "array" and length == 0) and
-  (.ctlogs | type == "array" and length == 0) and
+  ((.tlogs // []) | type == "array" and length == 0) and
+  ((.certificateAuthorities // []) | type == "array" and length == 0) and
+  ((.ctlogs // []) | type == "array" and length == 0) and
   (.timestampAuthorities | type == "array" and length == 1) and
   (.timestampAuthorities[0].uri | test("^https://")) and
   (.timestampAuthorities[0].certChain.certificates | type == "array" and length >= 2)

@@ -22,9 +22,6 @@ mkdir -p "$release_dir" "$evidence_dir" "${lock_dir}/trust"
 
 printf '%s\n' 'fixture public key' > "${lock_dir}/trust/public.pem"
 jq -n '{
-  tlogs: [],
-  certificateAuthorities: [],
-  ctlogs: [],
   timestampAuthorities: [{
     uri: "https://tsa.example.test/api/v1/timestamp",
     certChain: {certificates: ["leaf", "root"]}

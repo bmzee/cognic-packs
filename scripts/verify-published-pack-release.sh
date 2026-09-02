@@ -306,9 +306,9 @@ for signature_bundle in "$archive_bundle" "$oci_bundle"; do
     fail SIGNATURE 'published signature bundle is not a JSON object'
 done
 jq -e '
-  (.tlogs | type == "array" and length == 0) and
-  (.certificateAuthorities | type == "array" and length == 0) and
-  (.ctlogs | type == "array" and length == 0) and
+  ((.tlogs // []) | type == "array" and length == 0) and
+  ((.certificateAuthorities // []) | type == "array" and length == 0) and
+  ((.ctlogs // []) | type == "array" and length == 0) and
   (.timestampAuthorities | type == "array" and length == 1) and
   (.timestampAuthorities[0].uri | test("^https://")) and
   (.timestampAuthorities[0].certChain.certificates | type == "array" and length >= 2)

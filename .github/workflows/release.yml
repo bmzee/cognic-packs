@@ -547,9 +547,9 @@ jobs:
           jq -e \
             --arg uri "$COSIGN_TSA_URI" \
             --arg start "$COSIGN_TSA_VALIDITY_START" '
-              (.tlogs | type == "array" and length == 0) and
-              (.certificateAuthorities | type == "array" and length == 0) and
-              (.ctlogs | type == "array" and length == 0) and
+              ((.tlogs // []) | type == "array" and length == 0) and
+              ((.certificateAuthorities // []) | type == "array" and length == 0) and
+              ((.ctlogs // []) | type == "array" and length == 0) and
               (.timestampAuthorities | type == "array" and length == 1) and
               .timestampAuthorities[0].uri == $uri and
               .timestampAuthorities[0].validFor.start == $start and
