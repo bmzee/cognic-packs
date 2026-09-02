@@ -1,7 +1,7 @@
 schema_version: 1
 facility_api_version: 1.0.0
 name: gl-reconciler
-version: 0.1.0
+version: 0.1.1
 publisher: anthropic-fsi
 license: Apache-2.0
 risk_tier: baseline
