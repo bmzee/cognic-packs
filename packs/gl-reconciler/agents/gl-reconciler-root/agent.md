@@ -1,6 +1,6 @@
 ---
 name: gl-reconciler plugin
-description: Finds breaks in read-only database sources, traces their evidence, and reports them for sign-off.
+description: The gl-reconciler plugin's entry point — the agent you address first. It selects the imported reconciliation skill that matches your request, finds breaks in read-only database sources, traces their evidence, and reports them for sign-off; it never posts entries.
 model_tier: local
 tool_allowlist:
   - query_database

@@ -9,7 +9,7 @@ dependencies: []
 agents:
 - id: gl-reconciler
   name: gl-reconciler
-  description: Reconciles read-only, database-resident banking sources, identifies exact breaks, and produces a grounded exception report without posting entries.
+  description: Reconciles read-only, database-resident banking sources for a trade date, identifies exact breaks between ledger and subledger, traces each break to its evidence, and produces a grounded exception report for sign-off — without ever posting an entry.
   source:
     path: agents/gl-reconciler/agent.md
   model_tier: local
@@ -20,7 +20,7 @@ agents:
   delegation_grants: []
 - id: gl-reconciler-root
   name: gl-reconciler plugin
-  description: Finds breaks in read-only database sources, traces their evidence, and reports them for sign-off.
+  description: The gl-reconciler plugin's entry point — the agent you address first. It selects the imported reconciliation skill that matches your request, finds breaks in read-only database sources, traces their evidence, and reports them for sign-off; it never posts entries.
   source:
     path: agents/gl-reconciler-root/agent.md
   model_tier: local
