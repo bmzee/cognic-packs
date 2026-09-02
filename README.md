@@ -28,8 +28,11 @@ Converted from [anthropics/financial-services](https://github.com/anthropics/fin
 (Apache License 2.0) — see `LICENSE` and `NOTICE`. Instructional content is
 preserved; conversions are format-level. Packs are admitted to a deployment
 only after passing the platform's admission contract (signature, manifest
-validation, green evaluations) — this repository is source, not a trusted
-distribution channel.
+validation, green evaluations). Source checkouts and pull-request artifacts are
+authoring inputs, not trusted distributions. Official tagged releases use the
+repository's checksum-covered GitHub assets and digest-pinned, KMS-signed OCI
+artifacts; see [RELEASING.md](RELEASING.md) for the public release and consumer
+verification contract.
 
 ## Building your own pack
 

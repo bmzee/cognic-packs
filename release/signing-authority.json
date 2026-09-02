@@ -1,0 +1,23 @@
+{
+  "schemaVersion": "1",
+  "signingIdentity": {
+    "cosignVersion": "3.1.3",
+    "kmsKeyUri": "azurekms://cognic-release-vault.vault.azure.net/cognic-engine-release/a42500a545e0486f863551e65d60da3f",
+    "kmsPublicKeySha256": "5fbb5d97a16ac71771bdf505d855aa2c4496232572ec10ead22918446b6a5560",
+    "mode": "github-oidc-azure-kms-private-tsa",
+    "timestampAuthority": {
+      "apiVersion": 1,
+      "certificateChainSha256": "2459f9ddd328c1cac9c6d9731c62cbd3d1855e00547466e8d4202345026b679a",
+      "mode": "private-rfc3161",
+      "operator": "cognic-demo-tsa",
+      "trustedRootSha256": "129a87333c671ec53c86520f1778e929132b87fcfc270cd7b9c17d7bbc56952e",
+      "uri": "https://cognic-release-tsa.wittybush-5a158470.northeurope.azurecontainerapps.io/api/v1/timestamp",
+      "validityStart": "2026-08-27T11:47:53Z"
+    }
+  },
+  "sourceAuthority": {
+    "file": "infra/provenance/engine.yaml",
+    "gitCommit": "d14578036463bc51417cc178fa26d5acca13508e",
+    "repository": "bmzee/cognic-app"
+  }
+}
