@@ -1,16 +1,21 @@
 {
-  "certificateAuthorities": [],
-  "ctlogs": [],
+  "mediaType": "application/vnd.dev.sigstore.trustedroot+json;version=0.1",
   "timestampAuthorities": [
     {
+      "subject": {
+        "organization": "cognic-fixture",
+        "commonName": "cognic-fixture-tsa"
+      },
+      "uri": "https://tsa.example.test/api/v1/timestamp",
       "certChain": {
         "certificates": [
           "fixture-leaf",
           "fixture-root"
         ]
       },
-      "uri": "https://tsa.example.test/api/v1/timestamp"
+      "validFor": {
+        "start": "2026-08-27T11:47:53Z"
+      }
     }
-  ],
-  "tlogs": []
+  ]
 }
